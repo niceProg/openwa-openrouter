@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import ConnectionBar from './components/ConnectionBar.vue'
 import SessionPanel from './components/SessionPanel.vue'
 import AiSettingsPanel from './components/AiSettingsPanel.vue'
 import SendMessage from './components/SendMessage.vue'
@@ -18,13 +19,19 @@ const sessionId = ref('')
   </header>
 
   <main>
-    <div class="col">
-      <SessionPanel @select="sessionId = $event" />
-      <SendMessage v-model:session-id="sessionId" />
-    </div>
-    <div class="col">
-      <AiSettingsPanel />
-      <InboxPanel :session-id="sessionId" />
+    <ConnectionBar />
+
+    <!-- Kiri: konfigurasi (Session + AI). Kanan: operasi (Kirim + Inbox).
+         Pasangan ini menjaga tinggi kedua kolom relatif seimbang. -->
+    <div class="panels">
+      <div class="col">
+        <SessionPanel @select="sessionId = $event" />
+        <AiSettingsPanel />
+      </div>
+      <div class="col">
+        <SendMessage v-model:session-id="sessionId" />
+        <InboxPanel :session-id="sessionId" />
+      </div>
     </div>
   </main>
 </template>
@@ -53,9 +60,14 @@ h1 {
   opacity: 0.65;
 }
 
-/* Dua kolom independen: tiap kolom menumpuk kartunya sendiri,
-   jadi tinggi kartu tetangga tidak saling mengunci (tidak ada celah ragged). */
 main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Dua kolom independen: tiap kolom menumpuk kartunya sendiri. */
+.panels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.5rem;
@@ -70,7 +82,7 @@ main {
 }
 
 @media (max-width: 860px) {
-  main {
+  .panels {
     grid-template-columns: 1fr;
   }
 }

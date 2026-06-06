@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useOpenWa, type AiHealth, type Session, type SessionStatus } from '../lib/openwa'
 
 const emit = defineEmits<{ select: [id: string] }>()
 
 const {
   apiKey,
-  setApiKey,
   listSessions,
   createSession,
   getSession,
@@ -21,6 +20,7 @@ const newName = ref('')
 const error = ref('')
 const loading = ref(false)
 const ai = ref<AiHealth | null>(null)
+const hasKey = computed(() => apiKey.value.trim().length > 0)
 
 // State QR untuk session yang sedang dihubungkan.
 const qrSessionId = ref('')
@@ -142,25 +142,17 @@ function badgeClass(status: SessionStatus): string {
   <section class="card">
     <h2>Session WhatsApp</h2>
 
-    <label class="key">
-      API Key
-      <input
-        :value="apiKey"
-        type="password"
-        placeholder="X-API-Key"
-        @input="setApiKey(($event.target as HTMLInputElement).value)"
-      />
-    </label>
-
     <div class="row">
-      <button type="button" :disabled="loading" @click="refresh">
+      <button type="button" :disabled="loading || !hasKey" @click="refresh">
         {{ loading ? 'Memuat...' : 'Muat session' }}
       </button>
       <form class="create" @submit.prevent="create">
-        <input v-model="newName" type="text" placeholder="Nama session baru" />
-        <button type="submit">Buat + QR</button>
+        <input v-model="newName" type="text" placeholder="Nama session baru" :disabled="!hasKey" />
+        <button type="submit" :disabled="!hasKey">Buat + QR</button>
       </form>
     </div>
+
+    <p v-if="!hasKey" class="hint warn">Isi API Key gateway di atas dulu untuk memuat / membuat session.</p>
 
     <p v-if="ai" class="ai-status" :class="{ bad: !ai.running || !ai.hasModel }">
       <template v-if="ai.running && ai.hasModel">🤖 AI siap — model {{ ai.model }}</template>
@@ -224,12 +216,9 @@ h2 {
   margin: 0;
 }
 
-label.key {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-weight: 600;
-  font-size: 0.9rem;
+.hint.warn {
+  opacity: 1;
+  color: #9a7b00;
 }
 
 input {

@@ -7,7 +7,7 @@ type Status = 'idle' | 'sending' | 'success' | 'error'
 // sessionId dikontrol parent (diisi dari tombol "Pakai" di SessionPanel).
 const sessionId = defineModel<string>('sessionId', { default: '' })
 
-const { apiKey, setApiKey, sendText } = useOpenWa()
+const { apiKey, sendText } = useOpenWa()
 
 const phone = ref('')
 const text = ref('')
@@ -15,6 +15,10 @@ const status = ref<Status>('idle')
 const message = ref('')
 
 const chatIdPreview = computed(() => (phone.value ? toChatId(phone.value) : '—'))
+const hasKey = computed(() => apiKey.value.trim().length > 0)
+const canSend = computed(
+  () => !!sessionId.value && hasKey.value && !!phone.value.trim() && !!text.value.trim(),
+)
 
 async function send() {
   if (!sessionId.value || !apiKey.value || !phone.value || !text.value) {
@@ -43,21 +47,12 @@ async function send() {
     <h2>Kirim Pesan WhatsApp</h2>
     <p class="hint">via OpenWA gateway (proxy ke <code>localhost:2785</code>)</p>
 
-    <div class="grid">
-      <label>
-        Session ID
-        <input v-model.trim="sessionId" type="text" placeholder="pilih dari panel session" />
-      </label>
-      <label>
-        API Key
-        <input
-          :value="apiKey"
-          type="password"
-          placeholder="X-API-Key"
-          @input="setApiKey(($event.target as HTMLInputElement).value)"
-        />
-      </label>
-    </div>
+    <label>
+      Session ID
+      <input v-model.trim="sessionId" type="text" placeholder='pilih lewat tombol "Pakai"' />
+      <small v-if="sessionId">Mengirim sebagai session <code>{{ sessionId }}</code></small>
+      <small v-else class="warn">Belum ada session — klik "Pakai" di panel Session.</small>
+    </label>
 
     <label>
       Nomor Tujuan
@@ -70,7 +65,10 @@ async function send() {
       <textarea v-model="text" rows="4" placeholder="Tulis pesan..."></textarea>
     </label>
 
-    <button type="submit" :disabled="status === 'sending'">
+    <p v-if="!hasKey" class="note warn">Isi API Key gateway di atas dulu.</p>
+    <p v-else-if="!sessionId" class="note warn">Pilih session lewat tombol "Pakai".</p>
+
+    <button type="submit" :disabled="status === 'sending' || !canSend">
       {{ status === 'sending' ? 'Mengirim...' : 'Kirim' }}
     </button>
 
@@ -132,6 +130,20 @@ textarea:focus {
 small {
   font-weight: 400;
   opacity: 0.7;
+}
+
+small.warn {
+  opacity: 1;
+  color: #9a7b00;
+}
+
+.note {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.note.warn {
+  color: #9a7b00;
 }
 
 code {
