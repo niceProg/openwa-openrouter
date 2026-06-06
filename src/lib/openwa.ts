@@ -66,6 +66,13 @@ export interface AiHealth {
   reason?: string
 }
 
+export interface AiConfig {
+  model: string
+  baseUrl: string
+  hasKey: boolean
+  keyMasked: string
+}
+
 export interface InboxMessage {
   id: string
   sessionId: string
@@ -148,6 +155,10 @@ export function useOpenWa() {
         body: JSON.stringify({ enabled }),
       }),
     aiHealth: () => request<AiHealth>('/ai/health'),
+    aiConfig: () => request<AiConfig>('/ai/config'),
+    setAiConfig: (body: { model?: string; apiKey?: string; baseUrl?: string }) =>
+      request<AiConfig>('/ai/config', { method: 'POST', body: JSON.stringify(body) }),
+    aiModels: () => request<{ models: string[] }>('/ai/models'),
     sendText: (id: string, chatId: string, text: string) =>
       request<unknown>(`/sessions/${encodeURIComponent(id)}/messages/send-text`, {
         method: 'POST',

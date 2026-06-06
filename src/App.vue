@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import SessionPanel from './components/SessionPanel.vue'
+import AiSettingsPanel from './components/AiSettingsPanel.vue'
 import SendMessage from './components/SendMessage.vue'
 import InboxPanel from './components/InboxPanel.vue'
 
@@ -15,6 +16,7 @@ const sessionId = ref('')
 
   <main>
     <SessionPanel @select="sessionId = $event" />
+    <AiSettingsPanel />
     <SendMessage v-model:session-id="sessionId" />
     <InboxPanel :session-id="sessionId" />
   </main>

@@ -43,9 +43,41 @@ const API_KEY = loadApiKey()
 // ---------------------------------------------------------------------------
 // Konfigurasi AI auto-reply (OpenRouter, OpenAI-compatible). Lihat ../openrouterChat.
 // ---------------------------------------------------------------------------
-const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '')
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
-const AI_MODEL = process.env.AI_MODEL || 'meta-llama/llama-3.3-70b-instruct:free'
+// Konfigurasi AI yang bisa diubah runtime: env = nilai awal, override di-persist ke file
+// (data/ai-config.json) lewat POST /api/ai/config — jadi key & model bisa diganti tanpa redeploy.
+const AI_CONFIG_FILE = path.join(DATA_DIR, 'ai-config.json')
+const aiCfg = {
+  baseUrl: (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, ''),
+  apiKey: process.env.OPENROUTER_API_KEY || '',
+  model: process.env.AI_MODEL || 'meta-llama/llama-3.3-70b-instruct:free',
+}
+try {
+  if (fs.existsSync(AI_CONFIG_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(AI_CONFIG_FILE, 'utf8'))
+    if (saved.baseUrl) aiCfg.baseUrl = String(saved.baseUrl).replace(/\/$/, '')
+    if (typeof saved.apiKey === 'string' && saved.apiKey) aiCfg.apiKey = saved.apiKey
+    if (saved.model) aiCfg.model = saved.model
+  }
+} catch (e) {
+  console.error('Gagal memuat ai-config.json:', e.message)
+}
+function saveAiCfg() {
+  try {
+    fs.writeFileSync(AI_CONFIG_FILE, JSON.stringify(aiCfg, null, 2))
+  } catch (e) {
+    console.error('Gagal menyimpan ai-config.json:', e.message)
+  }
+}
+// Ringkasan config yang aman dikirim ke UI (key disamarkan, tidak pernah dibalikkan utuh).
+function aiCfgPublic() {
+  const k = aiCfg.apiKey
+  return {
+    model: aiCfg.model,
+    baseUrl: aiCfg.baseUrl,
+    hasKey: !!k,
+    keyMasked: k ? `${k.slice(0, 8)}…${k.slice(-4)}` : '',
+  }
+}
 const AI_SYSTEM_PROMPT =
   process.env.AI_SYSTEM_PROMPT ||
   'Kamu asisten WhatsApp yang ramah, membantu, dan ringkas. ' +
@@ -78,29 +110,29 @@ function aiHistFor(sessionId, chatId) {
 function aiHeaders() {
   return {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+    Authorization: `Bearer ${aiCfg.apiKey}`,
     'X-Title': 'WhatsApp Auto-Reply',
   }
 }
 
 // Minta balasan dari OpenRouter (non-streaming) memakai riwayat per pengirim.
 async function aiReply(sessionId, chatId, text) {
-  if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY belum diset')
+  if (!aiCfg.apiKey) throw new Error('OPENROUTER_API_KEY belum diset')
 
   const hist = aiHistFor(sessionId, chatId)
   const messages = [{ role: 'system', content: AI_SYSTEM_PROMPT }, ...hist, { role: 'user', content: text }]
 
-  const r = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+  const r = await fetch(`${aiCfg.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: aiHeaders(),
-    body: JSON.stringify({ model: AI_MODEL, messages, stream: false }),
+    body: JSON.stringify({ model: aiCfg.model, messages, stream: false }),
     signal: AbortSignal.timeout(60000),
   })
   if (!r.ok) {
     const t = await r.text().catch(() => '')
     let msg = `OpenRouter HTTP ${r.status}`
     if (r.status === 401) msg = 'OPENROUTER_API_KEY tidak valid (401)'
-    else if (r.status === 404 || /model/i.test(t)) msg = `model "${AI_MODEL}" tidak ditemukan di OpenRouter`
+    else if (r.status === 404 || /model/i.test(t)) msg = `model "${aiCfg.model}" tidak ditemukan di OpenRouter`
     else if (r.status === 429) msg = 'rate limit OpenRouter (429) — coba model lain atau tunggu'
     throw new Error(msg)
   }
@@ -165,6 +197,8 @@ function createSession(name) {
     authStrategy: new LocalAuth({ clientId: id, dataPath: path.join(DATA_DIR, 'sessions') }),
     puppeteer: {
       headless: true,
+      // Di Docker pakai Chromium sistem via PUPPETEER_EXECUTABLE_PATH; lokal biarkan default.
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     },
   })
@@ -330,27 +364,55 @@ app.post('/api/sessions/:id/ai', (req, res) => {
 
 // Status OpenRouter + ketersediaan model (untuk peringatan di UI).
 app.get('/api/ai/health', async (_req, res) => {
-  if (!OPENROUTER_API_KEY) {
-    return res.json({ running: false, model: AI_MODEL, reason: 'OPENROUTER_API_KEY belum diset' })
+  if (!aiCfg.apiKey) {
+    return res.json({ running: false, model: aiCfg.model, reason: 'OPENROUTER_API_KEY belum diset' })
   }
   try {
     // /key (perlu auth) memvalidasi API key; /models (publik) cek ketersediaan model.
     const [keyRes, modelsRes] = await Promise.all([
-      fetch(`${OPENROUTER_BASE_URL}/key`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }),
-      fetch(`${OPENROUTER_BASE_URL}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }).catch(() => null),
+      fetch(`${aiCfg.baseUrl}/key`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }),
+      fetch(`${aiCfg.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }).catch(() => null),
     ])
     if (!keyRes.ok) {
       const reason = keyRes.status === 401 ? 'OPENROUTER_API_KEY tidak valid (401)' : `HTTP ${keyRes.status}`
-      return res.json({ running: false, model: AI_MODEL, reason })
+      return res.json({ running: false, model: aiCfg.model, reason })
     }
     let hasModel = true // default optimis bila daftar model tak terjangkau
     if (modelsRes && modelsRes.ok) {
       const data = await modelsRes.json()
-      hasModel = (data.data || []).map((m) => m.id).includes(AI_MODEL)
+      hasModel = (data.data || []).map((m) => m.id).includes(aiCfg.model)
     }
-    res.json({ running: true, model: AI_MODEL, hasModel })
+    res.json({ running: true, model: aiCfg.model, hasModel })
   } catch (e) {
-    res.json({ running: false, model: AI_MODEL, reason: e.message })
+    res.json({ running: false, model: aiCfg.model, reason: e.message })
+  }
+})
+
+// Baca konfigurasi AI aktif (key disamarkan).
+app.get('/api/ai/config', (_req, res) => {
+  res.json(aiCfgPublic())
+})
+
+// Ubah konfigurasi AI (model / apiKey / baseUrl) saat runtime — persist ke file.
+app.post('/api/ai/config', (req, res) => {
+  const { model, apiKey, baseUrl } = req.body || {}
+  if (typeof model === 'string' && model.trim()) aiCfg.model = model.trim()
+  if (typeof baseUrl === 'string' && baseUrl.trim()) aiCfg.baseUrl = baseUrl.trim().replace(/\/$/, '')
+  if (typeof apiKey === 'string' && apiKey.trim()) aiCfg.apiKey = apiKey.trim()
+  saveAiCfg()
+  res.json(aiCfgPublic())
+})
+
+// Daftar model OpenRouter (untuk dropdown di UI). Hanya id, diurutkan.
+app.get('/api/ai/models', async (_req, res) => {
+  try {
+    const r = await fetch(`${aiCfg.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(6000) })
+    if (!r.ok) return res.status(502).json({ message: `OpenRouter HTTP ${r.status}` })
+    const data = await r.json()
+    const ids = (data.data || []).map((m) => m.id).sort()
+    res.json({ models: ids })
+  } catch (e) {
+    res.status(502).json({ message: e.message })
   }
 })
 
@@ -424,7 +486,7 @@ app.listen(PORT, () => {
   console.log(`  API KEY  : ${API_KEY}`)
   console.log('  (kunci di atas dipakai di field "API Key" pada frontend)')
   console.log(
-    `  AI       : OpenRouter (${OPENROUTER_BASE_URL})  model=${AI_MODEL}  key=${OPENROUTER_API_KEY ? 'set' : 'MISSING'}  auto-reply default=${AI_DEFAULT ? 'ON' : 'OFF'}`,
+    `  AI       : OpenRouter (${aiCfg.baseUrl})  model=${aiCfg.model}  key=${aiCfg.apiKey ? 'set' : 'MISSING'}  auto-reply default=${AI_DEFAULT ? 'ON' : 'OFF'}`,
   )
   console.log('────────────────────────────────────────────')
 })
