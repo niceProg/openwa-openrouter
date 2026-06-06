@@ -256,8 +256,11 @@ input:focus {
 .create {
   display: flex;
   gap: 0.5rem;
-  flex: 1;
-  min-width: 220px;
+  flex: 1 1 100%; /* form buat-session turun ke baris sendiri agar tombol tak terpotong */
+}
+
+.create button {
+  flex-shrink: 0;
 }
 
 .create input {
