@@ -83,7 +83,7 @@ async function send() {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 520px;
+  width: 100%;
   padding: 1.75rem;
   border: 1px solid rgba(128, 128, 128, 0.25);
   border-radius: 12px;

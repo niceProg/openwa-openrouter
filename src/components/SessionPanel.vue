@@ -214,7 +214,7 @@ function badgeClass(status: SessionStatus): string {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 520px;
+  width: 100%;
   padding: 1.75rem;
   border: 1px solid rgba(128, 128, 128, 0.25);
   border-radius: 12px;
@@ -315,6 +315,7 @@ button.danger {
 .actions {
   display: flex;
   gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .actions button {
