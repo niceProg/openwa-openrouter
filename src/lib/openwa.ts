@@ -1,4 +1,5 @@
 import { useAuth } from './auth'
+import { API_BASE } from './api'
 
 // ---------------------------------------------------------------------------
 // Fungsi murni (mudah diuji tanpa server)
@@ -80,7 +81,7 @@ export interface InboxMessage {
 
 /** Bangun URL SSE untuk inbox (auth via query karena EventSource tak bisa set header). */
 export function buildEventsUrl(id: string, token: string): string {
-  return `/api/sessions/${encodeURIComponent(id)}/events?token=${encodeURIComponent(token)}`
+  return `${API_BASE}/api/sessions/${encodeURIComponent(id)}/events?token=${encodeURIComponent(token)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +98,7 @@ async function request<T = unknown>(path: string, init: RequestInit = {}): Promi
     headers['Content-Type'] = 'application/json'
   }
 
-  const res = await fetch(`/api${path}`, { ...init, headers })
+  const res = await fetch(`${API_BASE}/api${path}`, { ...init, headers })
   const text = await res.text()
   let json: unknown = undefined
   try {

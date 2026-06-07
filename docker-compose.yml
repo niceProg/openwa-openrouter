@@ -1,6 +1,21 @@
-# Deploy stack: backend gateway (WA + Chromium) + web (Vue static via nginx).
-# Host nginx (di server) cukup proxy ke 127.0.0.1:8090 → container web.
+# Deploy stack 2-domain:
+#   web (Vue statis)        → openwa.yum-dev.com      (host nginx → 127.0.0.1:8090)
+#   backend (WA + Chromium) → api-openwa.yum-dev.com  (host nginx → 127.0.0.1:2785)
+#   db (Postgres)           → internal saja
 services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+    volumes:
+      - openwa-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER:-openwa}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -8,28 +23,32 @@ services:
     image: openwa-backend
     restart: unless-stopped
     init: true # reap proses anak Chromium
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
-      - ./backend/.env # berisi OPENROUTER_API_KEY (dibuat saat deploy, gitignored)
+      - ./backend/.env # OPENROUTER_*, JWT_SECRET, ADMIN_*, SMTP_*, DATABASE_URL, CORS_ORIGIN
     environment:
-      PORT: "2785"
+      PORT: '2785'
       DATA_DIR: /app/data
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
     volumes:
       - openwa-data:/app/data # sesi WhatsApp (LocalAuth), api-key, ai-config
-    shm_size: "512m" # Chromium butuh /dev/shm cukup
-    expose:
-      - "2785"
+    shm_size: '512m' # Chromium butuh /dev/shm cukup
+    ports:
+      - '127.0.0.1:2785:2785' # host nginx (api-openwa) proxy ke sini
 
   web:
     build:
       context: .
       dockerfile: web/Dockerfile
+      args:
+        VITE_API_BASE: https://api-openwa.yum-dev.com
     image: openwa-web
     restart: unless-stopped
-    depends_on:
-      - backend
     ports:
-      - "127.0.0.1:8090:80" # hanya localhost; host nginx yang ekspos publik + TLS
+      - '127.0.0.1:8090:80' # host nginx (openwa) proxy ke sini
 
 volumes:
   openwa-data:
+  openwa-db:

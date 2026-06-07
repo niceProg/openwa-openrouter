@@ -322,7 +322,8 @@ function createSession({ name, ownerId, aiModel }) {
 // ---------------------------------------------------------------------------
 const app = express()
 app.set('trust proxy', 1) // di belakang nginx → req.ip pakai X-Forwarded-For
-app.use(cors())
+// CORS: batasi ke origin frontend bila CORS_ORIGIN diset (mis. https://openwa.yum-dev.com).
+app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true }))
 app.use(express.json())
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))

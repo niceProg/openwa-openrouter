@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { API_BASE } from './api'
 
 export interface AuthUser {
   id: string
@@ -19,7 +20,7 @@ async function authRequest<T = unknown>(path: string, body?: unknown): Promise<T
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (token.value) headers['Authorization'] = `Bearer ${token.value}`
 
-  const res = await fetch(`/api/auth${path}`, {
+  const res = await fetch(`${API_BASE}/api/auth${path}`, {
     method: body !== undefined ? 'POST' : 'GET',
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,

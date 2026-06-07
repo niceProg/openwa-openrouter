@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useAuth } from './auth'
+import { API_BASE } from './api'
 
 export interface AdminUser {
   id: string
@@ -36,7 +37,7 @@ async function adminRequest<T = unknown>(
   if (adminToken.value) headers['X-Admin-Token'] = adminToken.value
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
 
-  const res = await fetch(`/api/admin${path}`, {
+  const res = await fetch(`${API_BASE}/api/admin${path}`, {
     method: opts.method || (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
