@@ -156,6 +156,13 @@ function pushInbox(id, entry) {
     const payload = `data: ${JSON.stringify(entry)}\n\n`
     for (const res of subs) res.write(payload)
   }
+
+  // Persist ke DB agar riwayat inbox tahan restart (dedup via session_id+msg_id).
+  dbQuery(
+    `INSERT INTO inbox_messages(session_id, msg_id, from_number, from_name, body, type, has_media, outgoing, ts)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (session_id, msg_id) DO NOTHING`,
+    [id, entry.id, entry.from, entry.fromName || null, entry.body || '', entry.type || null, !!entry.hasMedia, !!entry.outgoing, entry.timestamp || null],
+  ).catch(() => {})
 }
 
 function slugify(name) {
@@ -427,10 +434,18 @@ app.get('/api/sessions/:id/qr', waUser, (req, res) => {
   if (s) res.json({ code: s.qr, image: s.qrImage })
 })
 
-// Riwayat pesan masuk yang dibuffer (untuk muatan awal inbox).
-app.get('/api/sessions/:id/messages', waUser, (req, res) => {
+// Riwayat pesan masuk (persisten dari DB) untuk muatan awal inbox.
+app.get('/api/sessions/:id/messages', waUser, async (req, res) => {
   const s = ownedSession(req, res)
-  if (s) res.json(inbox.get(req.params.id) || [])
+  if (!s) return
+  const r = await dbQuery(
+    `SELECT msg_id AS id, session_id AS "sessionId", from_number AS "from", from_name AS "fromName",
+            body, type, has_media AS "hasMedia", outgoing, ts AS timestamp
+     FROM (SELECT * FROM inbox_messages WHERE session_id=$1 ORDER BY id DESC LIMIT 200) t
+     ORDER BY id ASC`,
+    [req.params.id],
+  )
+  res.json(r.rows.map((m) => ({ ...m, timestamp: Number(m.timestamp) })))
 })
 
 // Aktif/nonaktifkan auto-reply AI untuk satu session.
@@ -525,6 +540,7 @@ app.delete('/api/sessions/:id', waUser, async (req, res) => {
   inbox.delete(s.id)
   sessions.delete(s.id)
   await dbQuery('DELETE FROM wa_sessions WHERE id=$1', [s.id]).catch(() => {})
+  await dbQuery('DELETE FROM inbox_messages WHERE session_id=$1', [s.id]).catch(() => {})
   res.json({ message: 'Session deleted' })
 })
 

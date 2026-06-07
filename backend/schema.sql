@@ -61,3 +61,20 @@ CREATE TABLE IF NOT EXISTS wa_sessions (
   ai_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Riwayat pesan masuk (persisten, tahan restart). Dedup via (session_id, msg_id).
+CREATE TABLE IF NOT EXISTS inbox_messages (
+  id          BIGSERIAL PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  msg_id      TEXT,
+  from_number TEXT,
+  from_name   TEXT,
+  body        TEXT,
+  type        TEXT,
+  has_media   BOOLEAN NOT NULL DEFAULT FALSE,
+  outgoing    BOOLEAN NOT NULL DEFAULT FALSE,
+  ts          BIGINT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (session_id, msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_session ON inbox_messages(session_id, id);
