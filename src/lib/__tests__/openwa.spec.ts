@@ -42,9 +42,9 @@ describe('getQrImage', () => {
 })
 
 describe('buildEventsUrl', () => {
-  it('builds an SSE url with encoded id and apiKey', () => {
-    expect(buildEventsUrl('my session', 'owa_abc')).toBe(
-      '/api/sessions/my%20session/events?apiKey=owa_abc',
+  it('builds an SSE url with encoded id and token', () => {
+    expect(buildEventsUrl('my session', 'jwt_abc')).toBe(
+      '/api/sessions/my%20session/events?token=jwt_abc',
     )
   })
 })

@@ -1,26 +1,15 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
-import { useOpenWa, type AiHealth, type Session, type SessionStatus } from '../lib/openwa'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { useOpenWa, type Session, type SessionStatus } from '../lib/openwa'
 
 const emit = defineEmits<{ select: [id: string] }>()
 
-const {
-  apiKey,
-  listSessions,
-  createSession,
-  getSession,
-  getQr,
-  deleteSession,
-  setAi,
-  aiHealth,
-} = useOpenWa()
+const { listSessions, createSession, getSession, getQr, deleteSession, setAi } = useOpenWa()
 
 const sessions = ref<Session[]>([])
 const newName = ref('')
 const error = ref('')
 const loading = ref(false)
-const ai = ref<AiHealth | null>(null)
-const hasKey = computed(() => apiKey.value.trim().length > 0)
 
 // State QR untuk session yang sedang dihubungkan.
 const qrSessionId = ref('')
@@ -37,25 +26,17 @@ function stopPolling() {
 }
 
 onUnmounted(stopPolling)
+onMounted(refresh)
 
 async function refresh() {
   error.value = ''
   loading.value = true
   try {
     sessions.value = (await listSessions()) ?? []
-    loadAiHealth()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
-  }
-}
-
-async function loadAiHealth() {
-  try {
-    ai.value = await aiHealth()
-  } catch {
-    ai.value = null
   }
 }
 
@@ -143,24 +124,14 @@ function badgeClass(status: SessionStatus): string {
     <h2>Session WhatsApp</h2>
 
     <div class="row">
-      <button type="button" :disabled="loading || !hasKey" @click="refresh">
+      <button type="button" :disabled="loading" @click="refresh">
         {{ loading ? 'Memuat...' : 'Muat session' }}
       </button>
       <form class="create" @submit.prevent="create">
-        <input v-model="newName" type="text" placeholder="Nama session baru" :disabled="!hasKey" />
-        <button type="submit" :disabled="!hasKey">Buat + QR</button>
+        <input v-model="newName" type="text" placeholder="Nama session baru" />
+        <button type="submit">Buat + QR</button>
       </form>
     </div>
-
-    <p v-if="!hasKey" class="hint warn">Isi API Key gateway di atas dulu untuk memuat / membuat session.</p>
-
-    <p v-if="ai" class="ai-status" :class="{ bad: !ai.running || !ai.hasModel }">
-      <template v-if="ai.running && ai.hasModel">🤖 AI siap — model {{ ai.model }}</template>
-      <template v-else-if="ai.running && !ai.hasModel">
-        ⚠️ Model {{ ai.model }} tidak ditemukan di OpenRouter — periksa AI_MODEL
-      </template>
-      <template v-else>⚠️ AI belum siap ({{ ai.reason }}) — periksa OPENROUTER_API_KEY</template>
-    </p>
 
     <ul v-if="sessions.length" class="list">
       <li v-for="s in sessions" :key="s.id">

@@ -6,6 +6,8 @@ export interface AuthUser {
   status: string
   isAdmin: boolean
   emailVerified: boolean
+  apiKey?: string | null
+  aiModel?: string | null
 }
 
 // Token & user dibagikan lintas komponen + persist ke localStorage.
@@ -58,7 +60,13 @@ export function useAuth() {
     async login(email: string, password: string) {
       const r = await authRequest<{ token: string; user: AuthUser }>('/login', { email, password })
       setToken(r.token)
-      user.value = r.user
+      // Ambil profil lengkap (apiKey, aiModel) — respons login tak menyertakannya.
+      try {
+        const me = await authRequest<{ user: AuthUser }>('/me')
+        user.value = me.user
+      } catch {
+        user.value = r.user
+      }
       return r
     },
     async fetchMe() {

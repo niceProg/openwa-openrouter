@@ -139,7 +139,9 @@ router.post('/login', async (req, res) => {
 router.get('/me', authRequired, async (req, res) => {
   const r = await query('SELECT * FROM users WHERE id=$1', [req.user.uid])
   if (!r.rows.length) return res.status(401).json({ message: 'User tidak ditemukan' })
-  res.json({ user: publicUser(r.rows[0]) })
+  const u = r.rows[0]
+  const k = await query('SELECT key FROM api_keys WHERE user_id=$1 AND active=TRUE ORDER BY id DESC LIMIT 1', [u.id])
+  res.json({ user: { ...publicUser(u), apiKey: k.rows[0]?.key || null, aiModel: u.ai_model || null } })
 })
 
 module.exports = { router, authRequired, signToken, publicUser, ADMIN_EMAIL }

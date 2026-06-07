@@ -43,3 +43,6 @@ CREATE TABLE IF NOT EXISTS allowed_models (
   model      TEXT UNIQUE NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Model AI pilihan per user (dari daftar allowed_models). Fase 3.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_model TEXT;

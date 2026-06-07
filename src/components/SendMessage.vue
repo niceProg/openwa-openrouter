@@ -7,7 +7,7 @@ type Status = 'idle' | 'sending' | 'success' | 'error'
 // sessionId dikontrol parent (diisi dari tombol "Pakai" di SessionPanel).
 const sessionId = defineModel<string>('sessionId', { default: '' })
 
-const { apiKey, sendText } = useOpenWa()
+const { sendText } = useOpenWa()
 
 const phone = ref('')
 const text = ref('')
@@ -15,15 +15,14 @@ const status = ref<Status>('idle')
 const message = ref('')
 
 const chatIdPreview = computed(() => (phone.value ? toChatId(phone.value) : '—'))
-const hasKey = computed(() => apiKey.value.trim().length > 0)
 const canSend = computed(
-  () => !!sessionId.value && hasKey.value && !!phone.value.trim() && !!text.value.trim(),
+  () => !!sessionId.value && !!phone.value.trim() && !!text.value.trim(),
 )
 
 async function send() {
-  if (!sessionId.value || !apiKey.value || !phone.value || !text.value) {
+  if (!sessionId.value || !phone.value || !text.value) {
     status.value = 'error'
-    message.value = 'Session ID, API Key, nomor, dan pesan wajib diisi.'
+    message.value = 'Session, nomor, dan pesan wajib diisi.'
     return
   }
 
@@ -65,8 +64,7 @@ async function send() {
       <textarea v-model="text" rows="4" placeholder="Tulis pesan..."></textarea>
     </label>
 
-    <p v-if="!hasKey" class="note warn">Isi API Key gateway di atas dulu.</p>
-    <p v-else-if="!sessionId" class="note warn">Pilih session lewat tombol "Pakai".</p>
+    <p v-if="!sessionId" class="note warn">Pilih session lewat tombol "Pakai".</p>
 
     <button type="submit" :disabled="status === 'sending' || !canSend">
       {{ status === 'sending' ? 'Mengirim...' : 'Kirim' }}

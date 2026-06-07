@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useAuth } from './lib/auth'
 import AuthView from './components/AuthView.vue'
 import AdminView from './components/AdminView.vue'
-import ConnectionBar from './components/ConnectionBar.vue'
+import ApiKeyCard from './components/ApiKeyCard.vue'
 import SessionPanel from './components/SessionPanel.vue'
 import AiSettingsPanel from './components/AiSettingsPanel.vue'
 import SendMessage from './components/SendMessage.vue'
@@ -53,17 +53,27 @@ onMounted(async () => {
   </main>
 
   <main v-else>
-    <ConnectionBar />
-    <div class="panels">
-      <div class="col">
-        <SessionPanel @select="sessionId = $event" />
-        <AiSettingsPanel />
+    <section v-if="!user.isAdmin && user.status !== 'approved'" class="notice">
+      <h2>Menunggu persetujuan admin</h2>
+      <p>
+        Akunmu sudah terdaftar &amp; email terverifikasi. Fitur WhatsApp aktif setelah admin
+        menyetujui akunmu. Status saat ini: <strong>{{ user.status }}</strong>.
+      </p>
+    </section>
+
+    <template v-else>
+      <ApiKeyCard />
+      <div class="panels">
+        <div class="col">
+          <SessionPanel @select="sessionId = $event" />
+          <AiSettingsPanel />
+        </div>
+        <div class="col">
+          <SendMessage v-model:session-id="sessionId" />
+          <InboxPanel :session-id="sessionId" />
+        </div>
       </div>
-      <div class="col">
-        <SendMessage v-model:session-id="sessionId" />
-        <InboxPanel :session-id="sessionId" />
-      </div>
-    </div>
+    </template>
   </main>
 </template>
 
@@ -166,6 +176,25 @@ h1 {
 .center {
   text-align: center;
   opacity: 0.7;
+}
+
+.notice {
+  max-width: 560px;
+  padding: 1.75rem;
+  border: 1px solid rgba(255, 193, 7, 0.45);
+  border-radius: 12px;
+  background: rgba(255, 193, 7, 0.1);
+}
+
+.notice h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.2rem;
+}
+
+.notice p {
+  margin: 0;
+  opacity: 0.85;
+  font-size: 0.95rem;
 }
 
 main {

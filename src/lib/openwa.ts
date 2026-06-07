@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { useAuth } from './auth'
 
 // ---------------------------------------------------------------------------
 // Fungsi murni (mudah diuji tanpa server)
@@ -59,18 +59,11 @@ export interface Session {
   aiEnabled?: boolean
 }
 
-export interface AiHealth {
-  running: boolean
+// Konfigurasi AI per user: model pilihan + daftar model yang diizinkan admin.
+export interface MyAi {
   model: string
-  hasModel?: boolean
-  reason?: string
-}
-
-export interface AiConfig {
-  model: string
-  baseUrl: string
-  hasKey: boolean
-  keyMasked: string
+  allowedModels: string[]
+  systemReady: boolean
 }
 
 export interface InboxMessage {
@@ -86,22 +79,20 @@ export interface InboxMessage {
 }
 
 /** Bangun URL SSE untuk inbox (auth via query karena EventSource tak bisa set header). */
-export function buildEventsUrl(id: string, key: string): string {
-  return `/api/sessions/${encodeURIComponent(id)}/events?apiKey=${encodeURIComponent(key)}`
+export function buildEventsUrl(id: string, token: string): string {
+  return `/api/sessions/${encodeURIComponent(id)}/events?token=${encodeURIComponent(token)}`
 }
 
 // ---------------------------------------------------------------------------
-// Composable: kredensial + wrapper fetch ke gateway (proxy /api)
+// Composable: wrapper fetch ke gateway (proxy /api), auth via JWT (Bearer).
 // ---------------------------------------------------------------------------
 
-// API key dibagikan lintas komponen + persist ke localStorage.
-const apiKey = ref<string>(localStorage.getItem('owa.apiKey') ?? '')
-
 async function request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  const { token } = useAuth()
   const headers: Record<string, string> = {
-    'X-API-Key': apiKey.value,
     ...(init.headers as Record<string, string> | undefined),
   }
+  if (token.value) headers['Authorization'] = `Bearer ${token.value}`
   if (init.body && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
   }
@@ -127,20 +118,14 @@ async function request<T = unknown>(path: string, init: RequestInit = {}): Promi
 }
 
 export function useOpenWa() {
-  function setApiKey(key: string) {
-    apiKey.value = key
-    localStorage.setItem('owa.apiKey', key)
-  }
-
+  const { token } = useAuth()
   return {
-    apiKey,
-    setApiKey,
     request,
 
     listSessions: () => request<Session[]>('/sessions'),
     listMessages: (id: string) =>
       request<InboxMessage[]>(`/sessions/${encodeURIComponent(id)}/messages`),
-    eventsUrl: (id: string) => buildEventsUrl(id, apiKey.value),
+    eventsUrl: (id: string) => buildEventsUrl(id, token.value),
     createSession: (name: string) =>
       request<Session>('/sessions', { method: 'POST', body: JSON.stringify({ name }) }),
     getSession: (id: string) => request<Session>(`/sessions/${encodeURIComponent(id)}`),
@@ -154,11 +139,9 @@ export function useOpenWa() {
         method: 'POST',
         body: JSON.stringify({ enabled }),
       }),
-    aiHealth: () => request<AiHealth>('/ai/health'),
-    aiConfig: () => request<AiConfig>('/ai/config'),
-    setAiConfig: (body: { model?: string; apiKey?: string; baseUrl?: string }) =>
-      request<AiConfig>('/ai/config', { method: 'POST', body: JSON.stringify(body) }),
-    aiModels: () => request<{ models: string[] }>('/ai/models'),
+    myAi: () => request<MyAi>('/me/ai'),
+    setMyAi: (model: string) =>
+      request<{ ok: boolean; model: string }>('/me/ai', { method: 'POST', body: JSON.stringify({ model }) }),
     sendText: (id: string, chatId: string, text: string) =>
       request<unknown>(`/sessions/${encodeURIComponent(id)}/messages/send-text`, {
         method: 'POST',

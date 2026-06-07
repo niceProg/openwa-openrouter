@@ -120,8 +120,9 @@ function aiHeaders() {
 }
 
 // Minta balasan dari OpenRouter (non-streaming) memakai riwayat per pengirim.
-async function aiReply(sessionId, chatId, text) {
+async function aiReply(sessionId, chatId, text, model) {
   if (!aiSystem.apiKey) throw new Error('OPENROUTER_API_KEY belum diset')
+  const useModel = model || aiCfg.model
 
   const hist = aiHistFor(sessionId, chatId)
   const messages = [{ role: 'system', content: AI_SYSTEM_PROMPT }, ...hist, { role: 'user', content: text }]
@@ -129,14 +130,14 @@ async function aiReply(sessionId, chatId, text) {
   const r = await fetch(`${aiSystem.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: aiHeaders(),
-    body: JSON.stringify({ model: aiCfg.model, messages, stream: false }),
+    body: JSON.stringify({ model: useModel, messages, stream: false }),
     signal: AbortSignal.timeout(60000),
   })
   if (!r.ok) {
     const t = await r.text().catch(() => '')
     let msg = `OpenRouter HTTP ${r.status}`
     if (r.status === 401) msg = 'OPENROUTER_API_KEY tidak valid (401)'
-    else if (r.status === 404 || /model/i.test(t)) msg = `model "${aiCfg.model}" tidak ditemukan di OpenRouter`
+    else if (r.status === 404 || /model/i.test(t)) msg = `model "${useModel}" tidak ditemukan di OpenRouter`
     else if (r.status === 429) msg = 'rate limit OpenRouter (429) — coba model lain atau tunggu'
     throw new Error(msg)
   }
@@ -193,8 +194,8 @@ function publicSession(s) {
   }
 }
 
-function createSession(name) {
-  const id = slugify(name)
+function createSession({ name, ownerId, aiModel }) {
+  const id = `u${ownerId}-${slugify(name)}`
   if (sessions.has(id)) return sessions.get(id)
 
   const client = new Client({
@@ -210,6 +211,8 @@ function createSession(name) {
   const session = {
     id,
     name: name || id,
+    ownerId,
+    aiModel: aiModel || aiCfg.model,
     status: 'INITIALIZING',
     qr: '',
     qrImage: '',
@@ -244,7 +247,7 @@ function createSession(name) {
     const isIndividual = String(msg.from || '').endsWith('@c.us')
     if (session.aiEnabled && isIndividual && (msg.body || '').trim()) {
       try {
-        const reply = await aiReply(id, msg.from, msg.body)
+        const reply = await aiReply(id, msg.from, msg.body, session.aiModel)
         await client.sendMessage(msg.from, reply)
         pushInbox(id, {
           id: `ai-${msg.id?._serialized || msg.timestamp}`,
@@ -324,114 +327,142 @@ app.use(express.json())
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
 // Rute auth (publik) — dipasang SEBELUM gate X-API-Key agar bebas akses.
-const { router: authRouter } = require('./auth')
+const { router: authRouter, authRequired } = require('./auth')
 app.use('/api/auth', authRouter)
 
 // Rute admin (auth via JWT + passphrase, bukan X-API-Key) — juga sebelum gate.
 const { router: adminRouter } = require('./admin')
 app.use('/api/admin', adminRouter)
 
-// Auth gate untuk semua /api/* lainnya (legacy X-API-Key; akan jadi JWT di fase 3).
-app.use('/api', (req, res, next) => {
-  const key = req.get('X-API-Key') || req.query.apiKey
-  if (key !== API_KEY) return res.status(401).json({ message: 'Invalid or missing API key' })
-  next()
+// --- Auth multi-tenant (Fase 3): JWT user untuk panel, gateway API key untuk akses luar ---
+const jwt = require('jsonwebtoken')
+const { query: dbQuery } = require('./db')
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-insecure-change-me'
+
+// Muat user dari DB (status & is_admin selalu fresh) setelah JWT terverifikasi.
+async function loadDbUser(req, res, next) {
+  try {
+    const r = await dbQuery('SELECT id, email, status, is_admin, ai_model FROM users WHERE id=$1', [req.user.uid])
+    if (!r.rows.length) return res.status(401).json({ message: 'User tidak ditemukan' })
+    req.dbUser = r.rows[0]
+    next()
+  } catch (e) {
+    res.status(500).json({ message: e.message })
+  }
+}
+function requireApproved(req, res, next) {
+  if (req.dbUser.is_admin || req.dbUser.status === 'approved') return next()
+  res.status(403).json({ message: 'Akun menunggu persetujuan admin' })
+}
+// Rantai untuk endpoint panel: JWT → user DB → approved.
+const waUser = [authRequired, loadDbUser, requireApproved]
+
+// Endpoint kirim pesan: boleh JWT (panel) ATAU gateway API key (akses luar/UMKM).
+async function waUserOrKey(req, res, next) {
+  if ((req.get('Authorization') || '').startsWith('Bearer ')) {
+    return authRequired(req, res, () => loadDbUser(req, res, () => requireApproved(req, res, next)))
+  }
+  const key = req.get('X-API-Key')
+  if (!key) return res.status(401).json({ message: 'Butuh token login atau API key' })
+  try {
+    const r = await dbQuery(
+      `SELECT u.id, u.email, u.status, u.is_admin, u.ai_model
+       FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key=$1 AND k.active=TRUE`,
+      [key],
+    )
+    if (!r.rows.length) return res.status(401).json({ message: 'API key tidak valid' })
+    if (!r.rows[0].is_admin && r.rows[0].status !== 'approved') {
+      return res.status(403).json({ message: 'Akun belum disetujui' })
+    }
+    req.dbUser = r.rows[0]
+    dbQuery('UPDATE api_keys SET last_used_at=now() WHERE key=$1', [key]).catch(() => {})
+    next()
+  } catch (e) {
+    res.status(500).json({ message: e.message })
+  }
+}
+
+// Kepemilikan session (admin boleh semua).
+function canAccess(req, s) {
+  return req.dbUser.is_admin || String(s.ownerId) === String(req.dbUser.id)
+}
+// Ambil session milik sendiri; balas 404 bila bukan milik (hindari enumerasi).
+function ownedSession(req, res) {
+  const s = sessions.get(req.params.id)
+  if (!s || !canAccess(req, s)) {
+    res.status(404).json({ message: 'Session not found' })
+    return null
+  }
+  return s
+}
+
+app.get('/api/sessions', waUser, (req, res) => {
+  res.json([...sessions.values()].filter((s) => canAccess(req, s)).map(publicSession))
 })
 
-app.get('/api/sessions', (_req, res) => {
-  res.json([...sessions.values()].map(publicSession))
-})
-
-app.post('/api/sessions', (req, res) => {
-  const session = createSession(req.body?.name)
+app.post('/api/sessions', waUser, (req, res) => {
+  const session = createSession({ name: req.body?.name, ownerId: req.dbUser.id, aiModel: req.dbUser.ai_model })
   res.status(201).json(publicSession(session))
 })
 
-app.get('/api/sessions/:id', (req, res) => {
-  const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
-  res.json(publicSession(s))
+app.get('/api/sessions/:id', waUser, (req, res) => {
+  const s = ownedSession(req, res)
+  if (s) res.json(publicSession(s))
 })
 
-app.get('/api/sessions/:id/qr', (req, res) => {
-  const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
-  res.json({ code: s.qr, image: s.qrImage })
+app.get('/api/sessions/:id/qr', waUser, (req, res) => {
+  const s = ownedSession(req, res)
+  if (s) res.json({ code: s.qr, image: s.qrImage })
 })
 
 // Riwayat pesan masuk yang dibuffer (untuk muatan awal inbox).
-app.get('/api/sessions/:id/messages', (req, res) => {
-  const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
-  res.json(inbox.get(req.params.id) || [])
+app.get('/api/sessions/:id/messages', waUser, (req, res) => {
+  const s = ownedSession(req, res)
+  if (s) res.json(inbox.get(req.params.id) || [])
 })
 
 // Aktif/nonaktifkan auto-reply AI untuk satu session.
-app.post('/api/sessions/:id/ai', (req, res) => {
-  const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
+app.post('/api/sessions/:id/ai', waUser, (req, res) => {
+  const s = ownedSession(req, res)
+  if (!s) return
   s.aiEnabled = !!req.body?.enabled
   res.json({ id: s.id, aiEnabled: s.aiEnabled })
 })
 
-// Status OpenRouter + ketersediaan model (untuk peringatan di UI).
-app.get('/api/ai/health', async (_req, res) => {
-  if (!aiSystem.apiKey) {
-    return res.json({ running: false, model: aiCfg.model, reason: 'OPENROUTER_API_KEY belum diset' })
-  }
-  try {
-    // /key (perlu auth) memvalidasi API key; /models (publik) cek ketersediaan model.
-    const [keyRes, modelsRes] = await Promise.all([
-      fetch(`${aiSystem.baseUrl}/key`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }),
-      fetch(`${aiSystem.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }).catch(() => null),
-    ])
-    if (!keyRes.ok) {
-      const reason = keyRes.status === 401 ? 'OPENROUTER_API_KEY tidak valid (401)' : `HTTP ${keyRes.status}`
-      return res.json({ running: false, model: aiCfg.model, reason })
-    }
-    let hasModel = true // default optimis bila daftar model tak terjangkau
-    if (modelsRes && modelsRes.ok) {
-      const data = await modelsRes.json()
-      hasModel = (data.data || []).map((m) => m.id).includes(aiCfg.model)
-    }
-    res.json({ running: true, model: aiCfg.model, hasModel })
-  } catch (e) {
-    res.json({ running: false, model: aiCfg.model, reason: e.message })
-  }
+// Konfigurasi AI per user: model pilihan + daftar model yang diizinkan admin.
+app.get('/api/me/ai', authRequired, loadDbUser, async (req, res) => {
+  res.json({
+    model: req.dbUser.ai_model || '',
+    allowedModels: await settings.listAllowedModels(),
+    systemReady: !!aiSystem.apiKey,
+  })
 })
 
-// Baca konfigurasi AI aktif (key disamarkan).
-app.get('/api/ai/config', (_req, res) => {
-  res.json(aiCfgPublic())
-})
-
-// Ubah konfigurasi AI (model / apiKey / baseUrl) saat runtime — persist ke file.
-app.post('/api/ai/config', (req, res) => {
-  // Hanya model yang diatur di sini; OpenRouter key/base = pengaturan sistem (admin).
-  const { model } = req.body || {}
-  if (typeof model === 'string' && model.trim()) aiCfg.model = model.trim()
-  saveAiCfg()
-  res.json(aiCfgPublic())
-})
-
-// Daftar model OpenRouter (untuk dropdown di UI). Hanya id, diurutkan.
-app.get('/api/ai/models', async (_req, res) => {
-  try {
-    const r = await fetch(`${aiSystem.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(6000) })
-    if (!r.ok) return res.status(502).json({ message: `OpenRouter HTTP ${r.status}` })
-    const data = await r.json()
-    const ids = (data.data || []).map((m) => m.id).sort()
-    res.json({ models: ids })
-  } catch (e) {
-    res.status(502).json({ message: e.message })
+app.post('/api/me/ai', authRequired, loadDbUser, async (req, res) => {
+  const model = String(req.body?.model || '').trim()
+  const allowed = await settings.listAllowedModels()
+  if (!model || !allowed.includes(model)) {
+    return res.status(400).json({ message: 'Model tidak ada di daftar yang diizinkan admin' })
   }
+  await dbQuery('UPDATE users SET ai_model=$1 WHERE id=$2', [model, req.dbUser.id])
+  // Segarkan model pada session aktif milik user ini.
+  for (const s of sessions.values()) if (String(s.ownerId) === String(req.dbUser.id)) s.aiModel = model
+  res.json({ ok: true, model })
 })
 
 // Stream pesan masuk realtime (Server-Sent Events).
-// EventSource tak bisa kirim header, jadi auth lewat query ?apiKey= (dicek middleware /api).
-app.get('/api/sessions/:id/events', (req, res) => {
+// EventSource tak bisa kirim header → auth via query ?token=<JWT>.
+app.get('/api/sessions/:id/events', async (req, res) => {
+  try {
+    const dec = jwt.verify(String(req.query.token || ''), JWT_SECRET)
+    const r = await dbQuery('SELECT id, is_admin FROM users WHERE id=$1', [dec.uid])
+    if (!r.rows.length) throw new Error('no user')
+    req.dbUser = r.rows[0]
+  } catch {
+    return res.status(401).json({ message: 'Token tidak valid' })
+  }
   const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
+  if (!s || !canAccess(req, s)) return res.status(404).json({ message: 'Session not found' })
 
   res.set({
     'Content-Type': 'text/event-stream',
@@ -453,9 +484,9 @@ app.get('/api/sessions/:id/events', (req, res) => {
   })
 })
 
-app.delete('/api/sessions/:id', async (req, res) => {
-  const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
+app.delete('/api/sessions/:id', waUser, async (req, res) => {
+  const s = ownedSession(req, res)
+  if (!s) return
   try {
     await s.client.destroy()
   } catch (err) {
@@ -472,9 +503,9 @@ app.delete('/api/sessions/:id', async (req, res) => {
   res.json({ message: 'Session deleted' })
 })
 
-app.post('/api/sessions/:id/messages/send-text', async (req, res) => {
-  const s = sessions.get(req.params.id)
-  if (!s) return res.status(404).json({ message: 'Session not found' })
+app.post('/api/sessions/:id/messages/send-text', waUserOrKey, async (req, res) => {
+  const s = ownedSession(req, res)
+  if (!s) return
   if (s.status !== 'CONNECTED') {
     return res.status(409).json({ message: `Session not connected (status: ${s.status})` })
   }
