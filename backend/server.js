@@ -45,6 +45,10 @@ const API_KEY = loadApiKey()
 // ---------------------------------------------------------------------------
 // Konfigurasi AI yang bisa diubah runtime: env = nilai awal, override di-persist ke file
 // (data/ai-config.json) lewat POST /api/ai/config — jadi key & model bisa diganti tanpa redeploy.
+// OpenRouter key/base tingkat sistem dikelola admin (DB), fallback env.
+const settings = require('./settings')
+const { aiSystem } = settings
+
 const AI_CONFIG_FILE = path.join(DATA_DIR, 'ai-config.json')
 const aiCfg = {
   baseUrl: (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, ''),
@@ -70,10 +74,10 @@ function saveAiCfg() {
 }
 // Ringkasan config yang aman dikirim ke UI (key disamarkan, tidak pernah dibalikkan utuh).
 function aiCfgPublic() {
-  const k = aiCfg.apiKey
+  const k = aiSystem.apiKey
   return {
     model: aiCfg.model,
-    baseUrl: aiCfg.baseUrl,
+    baseUrl: aiSystem.baseUrl,
     hasKey: !!k,
     keyMasked: k ? `${k.slice(0, 8)}…${k.slice(-4)}` : '',
   }
@@ -110,19 +114,19 @@ function aiHistFor(sessionId, chatId) {
 function aiHeaders() {
   return {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${aiCfg.apiKey}`,
+    Authorization: `Bearer ${aiSystem.apiKey}`,
     'X-Title': 'WhatsApp Auto-Reply',
   }
 }
 
 // Minta balasan dari OpenRouter (non-streaming) memakai riwayat per pengirim.
 async function aiReply(sessionId, chatId, text) {
-  if (!aiCfg.apiKey) throw new Error('OPENROUTER_API_KEY belum diset')
+  if (!aiSystem.apiKey) throw new Error('OPENROUTER_API_KEY belum diset')
 
   const hist = aiHistFor(sessionId, chatId)
   const messages = [{ role: 'system', content: AI_SYSTEM_PROMPT }, ...hist, { role: 'user', content: text }]
 
-  const r = await fetch(`${aiCfg.baseUrl}/chat/completions`, {
+  const r = await fetch(`${aiSystem.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: aiHeaders(),
     body: JSON.stringify({ model: aiCfg.model, messages, stream: false }),
@@ -323,6 +327,10 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 const { router: authRouter } = require('./auth')
 app.use('/api/auth', authRouter)
 
+// Rute admin (auth via JWT + passphrase, bukan X-API-Key) — juga sebelum gate.
+const { router: adminRouter } = require('./admin')
+app.use('/api/admin', adminRouter)
+
 // Auth gate untuk semua /api/* lainnya (legacy X-API-Key; akan jadi JWT di fase 3).
 app.use('/api', (req, res, next) => {
   const key = req.get('X-API-Key') || req.query.apiKey
@@ -368,14 +376,14 @@ app.post('/api/sessions/:id/ai', (req, res) => {
 
 // Status OpenRouter + ketersediaan model (untuk peringatan di UI).
 app.get('/api/ai/health', async (_req, res) => {
-  if (!aiCfg.apiKey) {
+  if (!aiSystem.apiKey) {
     return res.json({ running: false, model: aiCfg.model, reason: 'OPENROUTER_API_KEY belum diset' })
   }
   try {
     // /key (perlu auth) memvalidasi API key; /models (publik) cek ketersediaan model.
     const [keyRes, modelsRes] = await Promise.all([
-      fetch(`${aiCfg.baseUrl}/key`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }),
-      fetch(`${aiCfg.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }).catch(() => null),
+      fetch(`${aiSystem.baseUrl}/key`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }),
+      fetch(`${aiSystem.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(4000) }).catch(() => null),
     ])
     if (!keyRes.ok) {
       const reason = keyRes.status === 401 ? 'OPENROUTER_API_KEY tidak valid (401)' : `HTTP ${keyRes.status}`
@@ -399,10 +407,9 @@ app.get('/api/ai/config', (_req, res) => {
 
 // Ubah konfigurasi AI (model / apiKey / baseUrl) saat runtime — persist ke file.
 app.post('/api/ai/config', (req, res) => {
-  const { model, apiKey, baseUrl } = req.body || {}
+  // Hanya model yang diatur di sini; OpenRouter key/base = pengaturan sistem (admin).
+  const { model } = req.body || {}
   if (typeof model === 'string' && model.trim()) aiCfg.model = model.trim()
-  if (typeof baseUrl === 'string' && baseUrl.trim()) aiCfg.baseUrl = baseUrl.trim().replace(/\/$/, '')
-  if (typeof apiKey === 'string' && apiKey.trim()) aiCfg.apiKey = apiKey.trim()
   saveAiCfg()
   res.json(aiCfgPublic())
 })
@@ -410,7 +417,7 @@ app.post('/api/ai/config', (req, res) => {
 // Daftar model OpenRouter (untuk dropdown di UI). Hanya id, diurutkan.
 app.get('/api/ai/models', async (_req, res) => {
   try {
-    const r = await fetch(`${aiCfg.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(6000) })
+    const r = await fetch(`${aiSystem.baseUrl}/models`, { headers: aiHeaders(), signal: AbortSignal.timeout(6000) })
     if (!r.ok) return res.status(502).json({ message: `OpenRouter HTTP ${r.status}` })
     const data = await r.json()
     const ids = (data.data || []).map((m) => m.id).sort()
@@ -486,6 +493,7 @@ app.post('/api/sessions/:id/messages/send-text', async (req, res) => {
 // Jalankan migrasi DB (idempotent) sebelum mulai melayani auth.
 const { migrate } = require('./db')
 migrate()
+  .then(() => settings.loadAiSystem())
   .then(() => console.log('  DB       : migrasi OK'))
   .catch((e) => console.error('  DB       : migrasi GAGAL —', e.message))
 
@@ -496,7 +504,7 @@ app.listen(PORT, () => {
   console.log(`  API KEY  : ${API_KEY}`)
   console.log('  (kunci di atas dipakai di field "API Key" pada frontend)')
   console.log(
-    `  AI       : OpenRouter (${aiCfg.baseUrl})  model=${aiCfg.model}  key=${aiCfg.apiKey ? 'set' : 'MISSING'}  auto-reply default=${AI_DEFAULT ? 'ON' : 'OFF'}`,
+    `  AI       : OpenRouter (${aiSystem.baseUrl})  model=${aiCfg.model}  key=${aiSystem.apiKey ? 'set' : 'MISSING'}  auto-reply default=${AI_DEFAULT ? 'ON' : 'OFF'}`,
   )
   console.log('────────────────────────────────────────────')
 })

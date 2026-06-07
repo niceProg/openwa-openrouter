@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useAuth } from './lib/auth'
 import AuthView from './components/AuthView.vue'
+import AdminView from './components/AdminView.vue'
 import ConnectionBar from './components/ConnectionBar.vue'
 import SessionPanel from './components/SessionPanel.vue'
 import AiSettingsPanel from './components/AiSettingsPanel.vue'
@@ -11,6 +12,12 @@ import InboxPanel from './components/InboxPanel.vue'
 const { user, fetchMe, logout } = useAuth()
 const sessionId = ref('')
 const loadingMe = ref(true)
+const view = ref<'panel' | 'admin'>('panel')
+
+// Saat user (admin) baru ter-set — login atau reload — default ke tab Admin.
+watch(user, (u, prev) => {
+  if (u?.isAdmin && !prev) view.value = 'admin'
+})
 
 onMounted(async () => {
   await fetchMe()
@@ -26,6 +33,10 @@ onMounted(async () => {
       <p class="tagline">Kelola session WhatsApp &amp; auto-reply AI (OpenRouter)</p>
     </div>
     <div v-if="user" class="account">
+      <nav v-if="user.isAdmin" class="tabs">
+        <button :class="{ active: view === 'panel' }" @click="view = 'panel'">Panel</button>
+        <button :class="{ active: view === 'admin' }" @click="view = 'admin'">Admin</button>
+      </nav>
       <span class="email">{{ user.email }}</span>
       <span v-if="user.isAdmin" class="badge admin">ADMIN</span>
       <span v-else class="badge" :class="user.status">{{ user.status }}</span>
@@ -36,6 +47,10 @@ onMounted(async () => {
   <main v-if="loadingMe" class="center"><p>Memuat…</p></main>
 
   <AuthView v-else-if="!user" />
+
+  <main v-else-if="user.isAdmin && view === 'admin'">
+    <AdminView />
+  </main>
 
   <main v-else>
     <ConnectionBar />
@@ -87,6 +102,29 @@ h1 {
   gap: 0.6rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-right: 0.4rem;
+}
+
+.tabs button {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  background: #42b883;
+  color: #fff;
+  border-color: transparent;
 }
 
 .email {
