@@ -81,32 +81,23 @@ router.post('/users/:id/api-key/revoke', async (req, res) => {
 // --- Pengaturan sistem (OpenRouter key/base + daftar model) ---
 router.get('/settings', async (_req, res) => {
   res.json({
-    openrouterBaseUrl: settings.aiSystem.baseUrl,
-    hasOpenrouterKey: !!settings.aiSystem.apiKey,
-    openrouterKeyMasked: settings.maskKey(settings.aiSystem.apiKey),
-    allowedModels: await settings.listAllowedModels(),
+    providers: settings.providersPublic(), // { openrouter:{baseUrl,hasKey,keyMasked}, google:{...} }
+    allowedModels: await settings.listAllowedModels(), // [{model, provider}]
   })
 })
 
 router.post('/settings', async (req, res) => {
-  const { openrouterApiKey, openrouterBaseUrl } = req.body || {}
-  if (typeof openrouterBaseUrl === 'string' && openrouterBaseUrl.trim()) {
-    const v = openrouterBaseUrl.trim().replace(/\/$/, '')
-    await settings.setSetting('openrouter_base_url', v)
-    settings.aiSystem.baseUrl = v
-  }
-  if (typeof openrouterApiKey === 'string' && openrouterApiKey.trim()) {
-    const v = openrouterApiKey.trim()
-    await settings.setSetting('openrouter_api_key', v)
-    settings.aiSystem.apiKey = v
-  }
-  res.json({ ok: true })
+  const b = req.body || {}
+  await settings.setProvider('openrouter', { apiKey: b.openrouterApiKey, baseUrl: b.openrouterBaseUrl })
+  await settings.setProvider('google', { apiKey: b.googleApiKey, baseUrl: b.googleBaseUrl })
+  res.json({ ok: true, providers: settings.providersPublic() })
 })
 
 router.post('/models', async (req, res) => {
   const m = String(req.body?.model || '').trim()
+  const provider = String(req.body?.provider || 'openrouter')
   if (!m) return res.status(400).json({ message: 'Model kosong' })
-  await settings.addAllowedModel(m)
+  await settings.addAllowedModel(m, provider)
   res.json({ ok: true, allowedModels: await settings.listAllowedModels() })
 })
 
@@ -115,14 +106,16 @@ router.delete('/models', async (req, res) => {
   res.json({ ok: true, allowedModels: await settings.listAllowedModels() })
 })
 
-// Daftar model OpenRouter (untuk admin pilih saat kurasi).
-router.get('/openrouter-models', async (_req, res) => {
+// Daftar model dari provider tertentu (untuk admin pilih saat kurasi).
+router.get('/provider-models', async (req, res) => {
+  const name = req.query.provider === 'google' ? 'google' : 'openrouter'
+  const p = settings.providers[name]
   try {
-    const r = await fetch(`${settings.aiSystem.baseUrl}/models`, {
-      headers: { Authorization: `Bearer ${settings.aiSystem.apiKey}` },
+    const r = await fetch(`${p.baseUrl}/models`, {
+      headers: { Authorization: `Bearer ${p.apiKey}` },
       signal: AbortSignal.timeout(6000),
     })
-    if (!r.ok) return res.status(502).json({ message: `OpenRouter HTTP ${r.status}` })
+    if (!r.ok) return res.status(502).json({ message: `${name} HTTP ${r.status}` })
     const d = await r.json()
     res.json({ models: (d.data || []).map((m) => m.id).sort() })
   } catch (e) {

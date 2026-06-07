@@ -11,12 +11,15 @@ const info = ref('')
 
 const users = ref<AdminUser[]>([])
 const settings = ref<SystemSettings | null>(null)
-const orModels = ref<string[]>([])
+const providerModelList = ref<string[]>([])
 const newModel = ref('')
+const newModelProvider = ref<'openrouter' | 'google'>('openrouter')
 
-// form pengaturan sistem
-const baseUrl = ref('')
-const apiKey = ref('')
+// form pengaturan sistem per provider
+const orBaseUrl = ref('')
+const orApiKey = ref('')
+const gBaseUrl = ref('')
+const gApiKey = ref('')
 
 function fail(e: unknown) {
   const msg = e instanceof Error ? e.message : String(e)
@@ -41,7 +44,8 @@ async function loadAll() {
   try {
     users.value = (await admin.listUsers()).users
     settings.value = await admin.getSettings()
-    baseUrl.value = settings.value.openrouterBaseUrl
+    orBaseUrl.value = settings.value.providers.openrouter.baseUrl
+    gBaseUrl.value = settings.value.providers.google.baseUrl
   } catch (e) {
     fail(e)
   }
@@ -87,8 +91,14 @@ async function saveSettings() {
   error.value = ''
   info.value = ''
   try {
-    await admin.saveSettings({ openrouterBaseUrl: baseUrl.value, openrouterApiKey: apiKey.value || undefined })
-    apiKey.value = ''
+    await admin.saveSettings({
+      openrouterBaseUrl: orBaseUrl.value,
+      openrouterApiKey: orApiKey.value || undefined,
+      googleBaseUrl: gBaseUrl.value,
+      googleApiKey: gApiKey.value || undefined,
+    })
+    orApiKey.value = ''
+    gApiKey.value = ''
     info.value = 'Pengaturan sistem tersimpan.'
     settings.value = await admin.getSettings()
   } catch (e) {
@@ -96,9 +106,9 @@ async function saveSettings() {
   }
 }
 
-async function loadOrModels() {
+async function loadProviderModels() {
   try {
-    orModels.value = (await admin.openrouterModels()).models
+    providerModelList.value = (await admin.providerModels(newModelProvider.value)).models
   } catch (e) {
     fail(e)
   }
@@ -106,7 +116,7 @@ async function loadOrModels() {
 async function addModel() {
   if (!newModel.value.trim()) return
   try {
-    const r = await admin.addModel(newModel.value.trim())
+    const r = await admin.addModel(newModel.value.trim(), newModelProvider.value)
     if (settings.value) settings.value.allowedModels = r.allowedModels
     newModel.value = ''
   } catch (e) {
@@ -185,39 +195,58 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- PENGATURAN SISTEM -->
+    <!-- PENGATURAN SISTEM (multi-provider) -->
     <section class="card">
-      <h2>Pengaturan Sistem (OpenRouter)</h2>
-      <label class="field">
-        Base URL
-        <input v-model="baseUrl" type="text" placeholder="https://openrouter.ai/api/v1" />
-      </label>
-      <label class="field">
-        API Key OpenRouter (sistem)
-        <input
-          v-model="apiKey"
-          type="password"
-          autocomplete="off"
-          :placeholder="settings?.hasOpenrouterKey ? `tersimpan: ${settings.openrouterKeyMasked} (kosongkan = tetap)` : 'sk-or-...'"
-        />
-      </label>
+      <h2>Pengaturan Sistem — Provider AI</h2>
+
+      <fieldset class="prov">
+        <legend>OpenRouter <span v-if="settings?.providers.openrouter.hasKey" class="pill ok">terisi</span></legend>
+        <label class="field">
+          Base URL
+          <input v-model="orBaseUrl" type="text" placeholder="https://openrouter.ai/api/v1" />
+        </label>
+        <label class="field">
+          API Key
+          <input v-model="orApiKey" type="password" autocomplete="off"
+            :placeholder="settings?.providers.openrouter.hasKey ? `tersimpan: ${settings.providers.openrouter.keyMasked} (kosongkan = tetap)` : 'sk-or-...'" />
+        </label>
+      </fieldset>
+
+      <fieldset class="prov">
+        <legend>Google (Gemini) <span v-if="settings?.providers.google.hasKey" class="pill ok">terisi</span></legend>
+        <label class="field">
+          Base URL
+          <input v-model="gBaseUrl" type="text" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
+        </label>
+        <label class="field">
+          API Key
+          <input v-model="gApiKey" type="password" autocomplete="off"
+            :placeholder="settings?.providers.google.hasKey ? `tersimpan: ${settings.providers.google.keyMasked} (kosongkan = tetap)` : 'AIza...'" />
+        </label>
+      </fieldset>
+
       <button type="button" @click="saveSettings">Simpan Pengaturan</button>
 
       <h3>Daftar Model untuk User</h3>
-      <p class="hint">Model di sini yang boleh dipilih user di Pengaturan AI.</p>
+      <p class="hint">Model di sini yang boleh dipilih user di Pengaturan AI (per provider).</p>
       <ul v-if="settings?.allowedModels.length" class="models">
-        <li v-for="m in settings.allowedModels" :key="m">
-          <code>{{ m }}</code>
-          <button type="button" class="link danger" @click="removeModel(m)">hapus</button>
+        <li v-for="m in settings.allowedModels" :key="m.model">
+          <code>{{ m.model }}</code>
+          <span class="pill" :class="m.provider">{{ m.provider }}</span>
+          <button type="button" class="link danger" @click="removeModel(m.model)">hapus</button>
         </li>
       </ul>
       <p v-else class="muted">Belum ada model. Tambahkan di bawah.</p>
 
       <div class="addmodel">
-        <input v-model="newModel" list="or-models" type="text" placeholder="mis. openai/gpt-4o-mini" />
-        <datalist id="or-models"><option v-for="m in orModels" :key="m" :value="m" /></datalist>
+        <select v-model="newModelProvider">
+          <option value="openrouter">OpenRouter</option>
+          <option value="google">Google</option>
+        </select>
+        <input v-model="newModel" list="prov-models" type="text" placeholder="mis. gemini-2.5-flash" />
+        <datalist id="prov-models"><option v-for="m in providerModelList" :key="m" :value="m" /></datalist>
         <button type="button" @click="addModel">Tambah</button>
-        <button type="button" class="ghost" @click="loadOrModels">Muat daftar OpenRouter</button>
+        <button type="button" class="ghost" @click="loadProviderModels">Muat daftar model</button>
       </div>
     </section>
 
@@ -379,6 +408,36 @@ td.actions button {
   color: #0d8c6d;
 }
 
+.pill.ok {
+  background: rgba(66, 184, 131, 0.2);
+  color: #2c8c63;
+}
+
+.pill.openrouter {
+  background: rgba(99, 102, 241, 0.18);
+  color: #4f46e5;
+}
+
+.pill.google {
+  background: rgba(234, 67, 53, 0.16);
+  color: #c5221f;
+}
+
+fieldset.prov {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 10px;
+  padding: 0.5rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+fieldset.prov legend {
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 0 0.4rem;
+}
+
 .models {
   list-style: none;
   margin: 0;
@@ -403,6 +462,15 @@ td.actions button {
 .addmodel input {
   flex: 1;
   min-width: 200px;
+}
+
+.addmodel select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 code {

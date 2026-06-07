@@ -45,21 +45,15 @@ const API_KEY = loadApiKey()
 // ---------------------------------------------------------------------------
 // Konfigurasi AI yang bisa diubah runtime: env = nilai awal, override di-persist ke file
 // (data/ai-config.json) lewat POST /api/ai/config — jadi key & model bisa diganti tanpa redeploy.
-// OpenRouter key/base tingkat sistem dikelola admin (DB), fallback env.
+// Provider AI (OpenRouter/Google) dikelola admin via DB, fallback env. Lihat settings.js.
 const settings = require('./settings')
-const { aiSystem } = settings
 
+// Model default (fallback) bila user belum memilih; dipersist ke file.
 const AI_CONFIG_FILE = path.join(DATA_DIR, 'ai-config.json')
-const aiCfg = {
-  baseUrl: (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, ''),
-  apiKey: process.env.OPENROUTER_API_KEY || '',
-  model: process.env.AI_MODEL || 'meta-llama/llama-3.3-70b-instruct:free',
-}
+const aiCfg = { model: process.env.AI_MODEL || 'meta-llama/llama-3.3-70b-instruct:free' }
 try {
   if (fs.existsSync(AI_CONFIG_FILE)) {
     const saved = JSON.parse(fs.readFileSync(AI_CONFIG_FILE, 'utf8'))
-    if (saved.baseUrl) aiCfg.baseUrl = String(saved.baseUrl).replace(/\/$/, '')
-    if (typeof saved.apiKey === 'string' && saved.apiKey) aiCfg.apiKey = saved.apiKey
     if (saved.model) aiCfg.model = saved.model
   }
 } catch (e) {
@@ -70,16 +64,6 @@ function saveAiCfg() {
     fs.writeFileSync(AI_CONFIG_FILE, JSON.stringify(aiCfg, null, 2))
   } catch (e) {
     console.error('Gagal menyimpan ai-config.json:', e.message)
-  }
-}
-// Ringkasan config yang aman dikirim ke UI (key disamarkan, tidak pernah dibalikkan utuh).
-function aiCfgPublic() {
-  const k = aiSystem.apiKey
-  return {
-    model: aiCfg.model,
-    baseUrl: aiSystem.baseUrl,
-    hasKey: !!k,
-    keyMasked: k ? `${k.slice(0, 8)}…${k.slice(-4)}` : '',
   }
 }
 const AI_SYSTEM_PROMPT =
@@ -110,35 +94,33 @@ function aiHistFor(sessionId, chatId) {
   return hist
 }
 
-// Header standar untuk request OpenRouter (Bearer + atribusi opsional).
-function aiHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${aiSystem.apiKey}`,
-    'X-Title': 'WhatsApp Auto-Reply',
-  }
-}
-
-// Minta balasan dari OpenRouter (non-streaming) memakai riwayat per pengirim.
+// Minta balasan AI (non-streaming) memakai riwayat per pengirim.
+// Provider (base URL + key) ditentukan dari model yang dipilih (OpenRouter / Google).
 async function aiReply(sessionId, chatId, text, model) {
-  if (!aiSystem.apiKey) throw new Error('OPENROUTER_API_KEY belum diset')
   const useModel = model || aiCfg.model
+  const prov = await settings.resolveProvider(useModel)
+  if (!prov.apiKey) throw new Error(`Provider "${prov.provider}" belum dikonfigurasi (API key kosong)`)
 
   const hist = aiHistFor(sessionId, chatId)
   const messages = [{ role: 'system', content: AI_SYSTEM_PROMPT }, ...hist, { role: 'user', content: text }]
 
-  const r = await fetch(`${aiSystem.baseUrl}/chat/completions`, {
+  const r = await fetch(`${prov.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: aiHeaders(),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${prov.apiKey}`,
+      'X-Title': 'WhatsApp Auto-Reply',
+    },
     body: JSON.stringify({ model: useModel, messages, stream: false }),
     signal: AbortSignal.timeout(60000),
   })
   if (!r.ok) {
     const t = await r.text().catch(() => '')
-    let msg = `OpenRouter HTTP ${r.status}`
-    if (r.status === 401) msg = 'OPENROUTER_API_KEY tidak valid (401)'
-    else if (r.status === 404 || /model/i.test(t)) msg = `model "${useModel}" tidak ditemukan di OpenRouter`
-    else if (r.status === 429) msg = 'rate limit OpenRouter (429) — coba model lain atau tunggu'
+    let msg = `${prov.provider} HTTP ${r.status}`
+    if (r.status === 401) msg = `API key ${prov.provider} tidak valid (401)`
+    else if (r.status === 404 || /model/i.test(t)) msg = `model "${useModel}" tidak ada di ${prov.provider}`
+    else if (r.status === 429) msg = `rate limit ${prov.provider} (429) — coba lagi/model lain`
+    else if (r.status === 503) msg = `${prov.provider} sedang sibuk (503) — coba lagi`
     throw new Error(msg)
   }
   const data = await r.json()
@@ -459,14 +441,14 @@ app.get('/api/me/ai', authRequired, loadDbUser, async (req, res) => {
   res.json({
     model: req.dbUser.ai_model || '',
     allowedModels: await settings.listAllowedModels(),
-    systemReady: !!aiSystem.apiKey,
+    systemReady: Object.values(settings.providersPublic()).some((p) => p.hasKey),
   })
 })
 
 app.post('/api/me/ai', authRequired, loadDbUser, async (req, res) => {
   const model = String(req.body?.model || '').trim()
   const allowed = await settings.listAllowedModels()
-  if (!model || !allowed.includes(model)) {
+  if (!model || !allowed.some((m) => m.model === model)) {
     return res.status(400).json({ message: 'Model tidak ada di daftar yang diizinkan admin' })
   }
   await dbQuery('UPDATE users SET ai_model=$1 WHERE id=$2', [model, req.dbUser.id])
@@ -560,7 +542,7 @@ app.post('/api/sessions/:id/messages/send-text', waUserOrKey, async (req, res) =
 // Jalankan migrasi DB (idempotent) sebelum mulai melayani auth.
 const { migrate } = require('./db')
 migrate()
-  .then(() => settings.loadAiSystem())
+  .then(() => settings.loadProviders())
   .then(() => console.log('  DB       : migrasi OK'))
   .catch((e) => console.error('  DB       : migrasi GAGAL —', e.message))
 
@@ -571,7 +553,7 @@ app.listen(PORT, () => {
   console.log(`  API KEY  : ${API_KEY}`)
   console.log('  (kunci di atas dipakai di field "API Key" pada frontend)')
   console.log(
-    `  AI       : OpenRouter (${aiSystem.baseUrl})  model=${aiCfg.model}  key=${aiSystem.apiKey ? 'set' : 'MISSING'}  auto-reply default=${AI_DEFAULT ? 'ON' : 'OFF'}`,
+    `  AI       : providers openrouter=${settings.providers.openrouter.apiKey ? 'set' : '-'} google=${settings.providers.google.apiKey ? 'set' : '-'}  default-model=${aiCfg.model}  auto-reply default=${AI_DEFAULT ? 'ON' : 'OFF'}`,
   )
   console.log('────────────────────────────────────────────')
 })

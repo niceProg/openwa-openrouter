@@ -60,10 +60,15 @@ export interface Session {
   aiEnabled?: boolean
 }
 
+export interface AllowedModel {
+  model: string
+  provider: string
+}
+
 // Konfigurasi AI per user: model pilihan + daftar model yang diizinkan admin.
 export interface MyAi {
   model: string
-  allowedModels: string[]
+  allowedModels: AllowedModel[]
   systemReady: boolean
 }
 

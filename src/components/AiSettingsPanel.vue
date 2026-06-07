@@ -55,7 +55,9 @@ onMounted(load)
         <option value="" disabled>
           {{ cfg?.allowedModels.length ? 'Pilih model…' : 'Belum ada model dari admin' }}
         </option>
-        <option v-for="m in cfg?.allowedModels || []" :key="m" :value="m">{{ m }}</option>
+        <option v-for="m in cfg?.allowedModels || []" :key="m.model" :value="m.model">
+          {{ m.model }} ({{ m.provider }})
+        </option>
       </select>
       <small class="hint">Hubungi admin bila model yang kamu butuhkan belum tersedia.</small>
     </label>

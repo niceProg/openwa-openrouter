@@ -12,11 +12,18 @@ export interface AdminUser {
   api_key: string | null
 }
 
+export interface ProviderInfo {
+  baseUrl: string
+  hasKey: boolean
+  keyMasked: string
+}
+export interface AllowedModel {
+  model: string
+  provider: string
+}
 export interface SystemSettings {
-  openrouterBaseUrl: string
-  hasOpenrouterKey: boolean
-  openrouterKeyMasked: string
-  allowedModels: string[]
+  providers: { openrouter: ProviderInfo; google: ProviderInfo }
+  allowedModels: AllowedModel[]
 }
 
 // adminToken (hasil unlock passphrase) — sessionStorage agar hilang saat tab ditutup.
@@ -78,12 +85,17 @@ export function useAdmin() {
       adminRequest<{ apiKey: string }>(`/users/${id}/api-key/regenerate`, { body: {} }),
     revokeKey: (id: string) => adminRequest(`/users/${id}/api-key/revoke`, { body: {} }),
     getSettings: () => adminRequest<SystemSettings>('/settings'),
-    saveSettings: (b: { openrouterApiKey?: string; openrouterBaseUrl?: string }) =>
-      adminRequest('/settings', { body: b }),
-    addModel: (model: string) =>
-      adminRequest<{ allowedModels: string[] }>('/models', { body: { model } }),
+    saveSettings: (b: {
+      openrouterApiKey?: string
+      openrouterBaseUrl?: string
+      googleApiKey?: string
+      googleBaseUrl?: string
+    }) => adminRequest('/settings', { body: b }),
+    addModel: (model: string, provider: string) =>
+      adminRequest<{ allowedModels: AllowedModel[] }>('/models', { body: { model, provider } }),
     removeModel: (model: string) =>
-      adminRequest<{ allowedModels: string[] }>('/models', { method: 'DELETE', body: { model } }),
-    openrouterModels: () => adminRequest<{ models: string[] }>('/openrouter-models'),
+      adminRequest<{ allowedModels: AllowedModel[] }>('/models', { method: 'DELETE', body: { model } }),
+    providerModels: (provider: string) =>
+      adminRequest<{ models: string[] }>(`/provider-models?provider=${encodeURIComponent(provider)}`),
   }
 }

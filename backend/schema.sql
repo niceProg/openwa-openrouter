@@ -49,3 +49,6 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_model TEXT;
 
 -- Hitung percobaan salah OTP untuk anti brute-force.
 ALTER TABLE email_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
+
+-- Provider tiap model (openrouter | google). Multi-provider.
+ALTER TABLE allowed_models ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'openrouter';
