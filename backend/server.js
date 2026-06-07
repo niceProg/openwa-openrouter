@@ -243,9 +243,22 @@ function createSession({ name, ownerId, aiModel }) {
       timestamp: (msg.timestamp || 0) * 1000,
     })
 
-    // Auto-reply AI: hanya chat pribadi (@c.us) & saat fitur diaktifkan.
-    const isIndividual = String(msg.from || '').endsWith('@c.us')
-    if (session.aiEnabled && isIndividual && (msg.body || '').trim()) {
+    // Auto-reply AI: hanya chat PRIBADI berupa teks (bukan grup/channel/status).
+    // WA modern memakai @c.us ATAU @lid untuk chat pribadi, jadi jangan hardcode @c.us.
+    const fromId = String(msg.from || '')
+    let isGroupChat = fromId.endsWith('@g.us')
+    try {
+      const chat = await msg.getChat()
+      isGroupChat = chat.isGroup
+    } catch {
+      /* fallback: tebak dari suffix */
+    }
+    const isPrivateText =
+      !isGroupChat &&
+      !fromId.endsWith('@newsletter') &&
+      fromId !== 'status@broadcast' &&
+      msg.type === 'chat'
+    if (session.aiEnabled && isPrivateText && (msg.body || '').trim()) {
       try {
         const reply = await aiReply(id, msg.from, msg.body, session.aiModel)
         await client.sendMessage(msg.from, reply)
