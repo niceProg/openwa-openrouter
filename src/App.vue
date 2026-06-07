@@ -1,28 +1,44 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { useAuth } from './lib/auth'
+import AuthView from './components/AuthView.vue'
 import ConnectionBar from './components/ConnectionBar.vue'
 import SessionPanel from './components/SessionPanel.vue'
 import AiSettingsPanel from './components/AiSettingsPanel.vue'
 import SendMessage from './components/SendMessage.vue'
 import InboxPanel from './components/InboxPanel.vue'
 
+const { user, fetchMe, logout } = useAuth()
 const sessionId = ref('')
+const loadingMe = ref(true)
+
+onMounted(async () => {
+  await fetchMe()
+  loadingMe.value = false
+})
 </script>
 
 <template>
   <header>
     <img class="logo" src="./assets/logo.svg" alt="Vue logo" width="44" height="44" />
-    <div>
+    <div class="brand">
       <h1>OpenWA Sender</h1>
       <p class="tagline">Kelola session WhatsApp &amp; auto-reply AI (OpenRouter)</p>
     </div>
+    <div v-if="user" class="account">
+      <span class="email">{{ user.email }}</span>
+      <span v-if="user.isAdmin" class="badge admin">ADMIN</span>
+      <span v-else class="badge" :class="user.status">{{ user.status }}</span>
+      <button class="logout" @click="logout">Keluar</button>
+    </div>
   </header>
 
-  <main>
-    <ConnectionBar />
+  <main v-if="loadingMe" class="center"><p>Memuat…</p></main>
 
-    <!-- Kiri: konfigurasi (Session + AI). Kanan: operasi (Kirim + Inbox).
-         Pasangan ini menjaga tinggi kedua kolom relatif seimbang. -->
+  <AuthView v-else-if="!user" />
+
+  <main v-else>
+    <ConnectionBar />
     <div class="panels">
       <div class="col">
         <SessionPanel @select="sessionId = $event" />
@@ -48,6 +64,10 @@ header {
   flex-shrink: 0;
 }
 
+.brand {
+  min-width: 0;
+}
+
 h1 {
   margin: 0;
   font-size: 1.6rem;
@@ -60,13 +80,62 @@ h1 {
   opacity: 0.65;
 }
 
+.account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.email {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  background: rgba(255, 193, 7, 0.22);
+  color: #9a7b00;
+}
+
+.badge.approved {
+  background: rgba(66, 184, 131, 0.2);
+  color: #2c8c63;
+}
+
+.badge.admin {
+  background: rgba(16, 163, 127, 0.2);
+  color: #0d8c6d;
+}
+
+.logout {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.center {
+  text-align: center;
+  opacity: 0.7;
+}
+
 main {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
 }
 
-/* Dua kolom independen: tiap kolom menumpuk kartunya sendiri. */
 .panels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

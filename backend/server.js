@@ -319,7 +319,11 @@ app.use(express.json())
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
-// Auth gate untuk semua /api/*
+// Rute auth (publik) — dipasang SEBELUM gate X-API-Key agar bebas akses.
+const { router: authRouter } = require('./auth')
+app.use('/api/auth', authRouter)
+
+// Auth gate untuk semua /api/* lainnya (legacy X-API-Key; akan jadi JWT di fase 3).
 app.use('/api', (req, res, next) => {
   const key = req.get('X-API-Key') || req.query.apiKey
   if (key !== API_KEY) return res.status(401).json({ message: 'Invalid or missing API key' })
@@ -478,6 +482,12 @@ app.post('/api/sessions/:id/messages/send-text', async (req, res) => {
     res.status(500).json({ message: err.message })
   }
 })
+
+// Jalankan migrasi DB (idempotent) sebelum mulai melayani auth.
+const { migrate } = require('./db')
+migrate()
+  .then(() => console.log('  DB       : migrasi OK'))
+  .catch((e) => console.error('  DB       : migrasi GAGAL —', e.message))
 
 app.listen(PORT, () => {
   console.log('────────────────────────────────────────────')
