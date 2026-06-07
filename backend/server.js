@@ -309,6 +309,16 @@ function createSession({ name, ownerId, aiModel }) {
     session.qrImage = ''
   })
 
+  // Bersihkan lock Chromium yang basi agar tak kena "profile in use" setelah restart/redeploy.
+  try {
+    const profileDir = path.join(DATA_DIR, 'sessions', `session-${id}`)
+    for (const f of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+      fs.rmSync(path.join(profileDir, f), { force: true })
+    }
+  } catch {
+    /* abaikan */
+  }
+
   client.initialize().catch((err) => {
     session.status = 'FAILED'
     console.error(`[${id}] initialize error:`, err.message)
