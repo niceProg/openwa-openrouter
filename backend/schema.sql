@@ -46,3 +46,6 @@ CREATE TABLE IF NOT EXISTS allowed_models (
 
 -- Model AI pilihan per user (dari daftar allowed_models). Fase 3.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_model TEXT;
+
+-- Hitung percobaan salah OTP untuk anti brute-force.
+ALTER TABLE email_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;

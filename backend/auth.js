@@ -5,10 +5,28 @@ const jwt = require('jsonwebtoken')
 const { query } = require('./db')
 const { sendOtp } = require('./mailer')
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-insecure-change-me'
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').trim().toLowerCase()
+const { JWT_SECRET, ADMIN_EMAIL } = require('./config')
 const OTP_TTL_MIN = 10
+const OTP_MAX_ATTEMPTS = 5
 const OTP_DEBUG = process.env.OTP_DEBUG === '1'
+
+// Rate limit sederhana per-IP (in-memory) untuk endpoint auth.
+const rlHits = new Map()
+function rateLimit(maxPerMin) {
+  return (req, res, next) => {
+    const ip = req.ip || 'unknown'
+    const now = Date.now()
+    const e = rlHits.get(ip)
+    if (!e || now - e.start > 60000) {
+      rlHits.set(ip, { start: now, n: 1 })
+      return next()
+    }
+    if (++e.n > maxPerMin) {
+      return res.status(429).json({ message: 'Terlalu banyak permintaan, coba lagi nanti.' })
+    }
+    next()
+  }
+}
 
 // --- password hashing (scrypt, tanpa dependency native) ---
 function hashPassword(pw) {
@@ -47,6 +65,8 @@ function publicUser(u) {
 }
 
 async function issueOtp(email) {
+  // Batalkan OTP lama yang belum dipakai → hanya satu kode aktif (perkecil brute-force).
+  await query("UPDATE email_otps SET consumed=TRUE WHERE email=$1 AND purpose='verify' AND consumed=FALSE", [email])
   const code = genCode()
   const expires = new Date(Date.now() + OTP_TTL_MIN * 60000)
   await query('INSERT INTO email_otps(email, code_hash, purpose, expires_at) VALUES ($1,$2,$3,$4)', [
@@ -73,6 +93,7 @@ function authRequired(req, res, next) {
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 const router = express.Router()
+router.use(rateLimit(60)) // maks 60 req/menit per IP untuk semua endpoint auth
 
 router.post('/register', async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase()
@@ -83,9 +104,11 @@ router.post('/register', async (req, res) => {
   const existing = await query('SELECT id, email_verified FROM users WHERE email=$1', [email])
   if (existing.rows.length) {
     if (existing.rows[0].email_verified) return res.status(409).json({ message: 'Email sudah terdaftar' })
-    // Terdaftar tapi belum verifikasi → kirim ulang OTP.
+    // Belum verifikasi → set ulang password + kirim OTP. OTP ke inbox asli,
+    // jadi hanya pemilik email yang bisa menuntaskan (cegah squatting akun).
+    await query('UPDATE users SET password_hash=$1 WHERE email=$2', [hashPassword(password), email])
     await issueOtp(email)
-    return res.json({ ok: true, message: 'Akun belum terverifikasi — OTP dikirim ulang ke email.' })
+    return res.json({ ok: true, message: 'Akun belum terverifikasi — password diperbarui & OTP dikirim ulang.' })
   }
 
   const isAdmin = !!ADMIN_EMAIL && email === ADMIN_EMAIL
@@ -113,13 +136,22 @@ router.post('/verify-otp', async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase()
   const code = String(req.body?.code || '').trim()
   const r = await query(
-    `SELECT id FROM email_otps
-     WHERE email=$1 AND purpose='verify' AND consumed=FALSE AND code_hash=$2 AND expires_at > now()
+    `SELECT id, code_hash, attempts FROM email_otps
+     WHERE email=$1 AND purpose='verify' AND consumed=FALSE AND expires_at > now()
      ORDER BY id DESC LIMIT 1`,
-    [email, hashCode(code)],
+    [email],
   )
-  if (!r.rows.length) return res.status(400).json({ message: 'Kode salah atau kedaluwarsa' })
-  await query('UPDATE email_otps SET consumed=TRUE WHERE id=$1', [r.rows[0].id])
+  const row = r.rows[0]
+  if (!row) return res.status(400).json({ message: 'Kode salah atau kedaluwarsa' })
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    await query('UPDATE email_otps SET consumed=TRUE WHERE id=$1', [row.id])
+    return res.status(429).json({ message: 'Terlalu banyak percobaan. Minta kode baru.' })
+  }
+  if (row.code_hash !== hashCode(code)) {
+    await query('UPDATE email_otps SET attempts=attempts+1 WHERE id=$1', [row.id])
+    return res.status(400).json({ message: 'Kode salah atau kedaluwarsa' })
+  }
+  await query('UPDATE email_otps SET consumed=TRUE WHERE id=$1', [row.id])
   await query('UPDATE users SET email_verified=TRUE WHERE email=$1', [email])
   res.json({ ok: true, message: 'Email terverifikasi. Silakan login.' })
 })

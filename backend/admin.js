@@ -5,8 +5,7 @@ const { query } = require('./db')
 const { authRequired } = require('./auth')
 const settings = require('./settings')
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-insecure-change-me'
-const ADMIN_PASSPHRASE = process.env.ADMIN_PASSPHRASE || ''
+const { JWT_SECRET, ADMIN_PASSPHRASE } = require('./config')
 
 async function isAdminUser(uid) {
   const r = await query('SELECT is_admin FROM users WHERE id=$1', [uid])

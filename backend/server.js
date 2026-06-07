@@ -321,6 +321,7 @@ function createSession({ name, ownerId, aiModel }) {
 // HTTP
 // ---------------------------------------------------------------------------
 const app = express()
+app.set('trust proxy', 1) // di belakang nginx → req.ip pakai X-Forwarded-For
 app.use(cors())
 app.use(express.json())
 
@@ -337,7 +338,7 @@ app.use('/api/admin', adminRouter)
 // --- Auth multi-tenant (Fase 3): JWT user untuk panel, gateway API key untuk akses luar ---
 const jwt = require('jsonwebtoken')
 const { query: dbQuery } = require('./db')
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-insecure-change-me'
+const { JWT_SECRET } = require('./config')
 
 // Muat user dari DB (status & is_admin selalu fresh) setelah JWT terverifikasi.
 async function loadDbUser(req, res, next) {
@@ -455,11 +456,14 @@ app.post('/api/me/ai', authRequired, loadDbUser, async (req, res) => {
 app.get('/api/sessions/:id/events', async (req, res) => {
   try {
     const dec = jwt.verify(String(req.query.token || ''), JWT_SECRET)
-    const r = await dbQuery('SELECT id, is_admin FROM users WHERE id=$1', [dec.uid])
+    const r = await dbQuery('SELECT id, status, is_admin FROM users WHERE id=$1', [dec.uid])
     if (!r.rows.length) throw new Error('no user')
     req.dbUser = r.rows[0]
   } catch {
     return res.status(401).json({ message: 'Token tidak valid' })
+  }
+  if (!req.dbUser.is_admin && req.dbUser.status !== 'approved') {
+    return res.status(403).json({ message: 'Akun menunggu persetujuan admin' })
   }
   const s = sessions.get(req.params.id)
   if (!s || !canAccess(req, s)) return res.status(404).json({ message: 'Session not found' })
