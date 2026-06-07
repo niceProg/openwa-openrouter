@@ -27,3 +27,6 @@ coverage
 *.sw?
 
 *.tsbuildinfo
+
+# Screenshot / lampiran lokal di root (jangan ikut ke repo)
+/image*.png
