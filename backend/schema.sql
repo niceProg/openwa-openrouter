@@ -52,3 +52,12 @@ ALTER TABLE email_otps ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
 
 -- Provider tiap model (openrouter | google). Multi-provider.
 ALTER TABLE allowed_models ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'openrouter';
+
+-- Metadata session WhatsApp untuk auto-restore saat boot (auth-nya sendiri via LocalAuth di volume).
+CREATE TABLE IF NOT EXISTS wa_sessions (
+  id         TEXT PRIMARY KEY,
+  owner_id   BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       TEXT,
+  ai_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

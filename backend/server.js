@@ -407,8 +407,13 @@ app.get('/api/sessions', waUser, (req, res) => {
   res.json([...sessions.values()].filter((s) => canAccess(req, s)).map(publicSession))
 })
 
-app.post('/api/sessions', waUser, (req, res) => {
+app.post('/api/sessions', waUser, async (req, res) => {
   const session = createSession({ name: req.body?.name, ownerId: req.dbUser.id, aiModel: req.dbUser.ai_model })
+  // Catat metadata untuk auto-restore saat boot.
+  await dbQuery(
+    'INSERT INTO wa_sessions(id, owner_id, name, ai_enabled) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name',
+    [session.id, req.dbUser.id, session.name, session.aiEnabled],
+  ).catch((e) => console.error('persist session:', e.message))
   res.status(201).json(publicSession(session))
 })
 
@@ -433,6 +438,7 @@ app.post('/api/sessions/:id/ai', waUser, (req, res) => {
   const s = ownedSession(req, res)
   if (!s) return
   s.aiEnabled = !!req.body?.enabled
+  dbQuery('UPDATE wa_sessions SET ai_enabled=$1 WHERE id=$2', [s.aiEnabled, s.id]).catch(() => {})
   res.json({ id: s.id, aiEnabled: s.aiEnabled })
 })
 
@@ -518,6 +524,7 @@ app.delete('/api/sessions/:id', waUser, async (req, res) => {
   }
   inbox.delete(s.id)
   sessions.delete(s.id)
+  await dbQuery('DELETE FROM wa_sessions WHERE id=$1', [s.id]).catch(() => {})
   res.json({ message: 'Session deleted' })
 })
 
@@ -539,12 +546,25 @@ app.post('/api/sessions/:id/messages/send-text', waUserOrKey, async (req, res) =
   }
 })
 
-// Jalankan migrasi DB (idempotent) sebelum mulai melayani auth.
+// Pulihkan session WhatsApp yang tercatat di DB (auth via LocalAuth di volume).
+async function restoreSessions() {
+  const r = await dbQuery(
+    'SELECT s.id, s.owner_id, s.name, s.ai_enabled, u.ai_model FROM wa_sessions s JOIN users u ON u.id = s.owner_id',
+  )
+  for (const row of r.rows) {
+    const sess = createSession({ name: row.name, ownerId: row.owner_id, aiModel: row.ai_model })
+    sess.aiEnabled = row.ai_enabled
+  }
+  if (r.rows.length) console.log(`  Sessions : memulihkan ${r.rows.length} session WhatsApp`)
+}
+
+// Jalankan migrasi DB (idempotent), muat provider, lalu pulihkan session.
 const { migrate } = require('./db')
 migrate()
   .then(() => settings.loadProviders())
+  .then(() => restoreSessions())
   .then(() => console.log('  DB       : migrasi OK'))
-  .catch((e) => console.error('  DB       : migrasi GAGAL —', e.message))
+  .catch((e) => console.error('  DB       : migrasi/restore GAGAL —', e.message))
 
 app.listen(PORT, () => {
   console.log('────────────────────────────────────────────')
