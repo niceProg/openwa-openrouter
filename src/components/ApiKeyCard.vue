@@ -1,15 +1,35 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useAuth } from '../lib/auth'
+import { useOpenWa } from '../lib/openwa'
 
 const { user } = useAuth()
+const { regenerateMyKey } = useOpenWa()
+
 const copied = ref(false)
+const busy = ref(false)
+const error = ref('')
+
+const approved = computed(() => !!user.value && (user.value.isAdmin || user.value.status === 'approved'))
 
 function copy() {
   if (!user.value?.apiKey) return
   navigator.clipboard?.writeText(user.value.apiKey)
   copied.value = true
   setTimeout(() => (copied.value = false), 1500)
+}
+
+async function generate() {
+  error.value = ''
+  busy.value = true
+  try {
+    const r = await regenerateMyKey()
+    if (user.value) user.value.apiKey = r.apiKey
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -20,14 +40,38 @@ function copy() {
       Pakai key ini untuk mengirim WhatsApp dari sistem bisnismu (header <code>X-API-Key</code>).
       Jangan dibagikan ke publik.
     </p>
-    <div class="keyrow">
-      <code class="key">{{ user.apiKey || '— belum tersedia (menunggu persetujuan) —' }}</code>
-      <button v-if="user.apiKey" type="button" @click="copy">{{ copied ? 'Tersalin ✓' : 'Salin' }}</button>
-    </div>
-    <p v-if="user.apiKey" class="hint">
-      Contoh: <code>POST /api/sessions/&lt;id&gt;/messages/send-text</code> +
-      header <code>X-API-Key: {{ user.apiKey.slice(0, 10) }}…</code>
-    </p>
+
+    <!-- Sudah punya key -->
+    <template v-if="user.apiKey">
+      <div class="keyrow">
+        <code class="key">{{ user.apiKey }}</code>
+        <button type="button" @click="copy">{{ copied ? 'Tersalin ✓' : 'Salin' }}</button>
+        <button type="button" class="ghost" :disabled="busy" @click="generate">
+          {{ busy ? '...' : 'Buat ulang' }}
+        </button>
+      </div>
+      <p class="hint">
+        Contoh: <code>POST /api/sessions/&lt;id&gt;/messages/send-text</code> +
+        header <code>X-API-Key: {{ user.apiKey.slice(0, 10) }}…</code>
+      </p>
+    </template>
+
+    <!-- Approved tapi belum punya key -->
+    <template v-else-if="approved">
+      <div class="keyrow">
+        <span class="muted">Belum ada API key.</span>
+        <button type="button" :disabled="busy" @click="generate">
+          {{ busy ? 'Membuat…' : 'Buat API Key' }}
+        </button>
+      </div>
+    </template>
+
+    <!-- Belum disetujui -->
+    <template v-else>
+      <code class="key muted">— belum tersedia (menunggu persetujuan admin) —</code>
+    </template>
+
+    <p v-if="error" class="error" role="status">{{ error }}</p>
   </section>
 </template>
 
@@ -78,13 +122,37 @@ button {
   cursor: pointer;
 }
 
+button.ghost {
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  color: inherit;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.muted {
+  opacity: 0.6;
 }
 
 .hint {
   margin: 0;
   font-size: 0.82rem;
   opacity: 0.7;
+}
+
+.error {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(220, 53, 69, 0.15);
+  color: #c92a3a;
+  font-size: 0.9rem;
 }
 </style>

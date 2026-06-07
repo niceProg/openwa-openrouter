@@ -452,6 +452,14 @@ app.post('/api/me/ai', authRequired, loadDbUser, async (req, res) => {
   res.json({ ok: true, model })
 })
 
+// Terbitkan / putar ulang gateway API key milik sendiri (user approved & admin).
+app.post('/api/me/api-key/regenerate', waUser, async (req, res) => {
+  await dbQuery('UPDATE api_keys SET active=FALSE WHERE user_id=$1', [req.dbUser.id])
+  const key = settings.genApiKey()
+  await dbQuery('INSERT INTO api_keys(user_id, key) VALUES ($1,$2)', [req.dbUser.id, key])
+  res.json({ ok: true, apiKey: key })
+})
+
 // Stream pesan masuk realtime (Server-Sent Events).
 // EventSource tak bisa kirim header → auth via query ?token=<JWT>.
 app.get('/api/sessions/:id/events', async (req, res) => {

@@ -140,6 +140,11 @@ export function useOpenWa() {
         method: 'POST',
         body: JSON.stringify({ enabled }),
       }),
+    regenerateMyKey: () =>
+      request<{ ok: boolean; apiKey: string }>('/me/api-key/regenerate', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
     myAi: () => request<MyAi>('/me/ai'),
     setMyAi: (model: string) =>
       request<{ ok: boolean; model: string }>('/me/ai', { method: 'POST', body: JSON.stringify({ model }) }),
