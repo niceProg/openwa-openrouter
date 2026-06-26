@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { motion, AnimatePresence } from 'motion-v'
 import { useAuth } from '../lib/auth'
 
 const { register, verifyOtp, resendOtp, forgotPassword, resetPassword, login } = useAuth()
@@ -125,74 +126,102 @@ async function doLogin() {
 
 <template>
   <main class="auth">
-    <section class="card">
+    <motion.section
+      class="card"
+      :initial="{ opacity: 0, y: 24, scale: 0.98 }"
+      :animate="{ opacity: 1, y: 0, scale: 1 }"
+      :transition="{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }"
+    >
       <div class="brand">
-        <span class="brand-badge" aria-hidden="true">
+        <motion.span
+          class="brand-badge"
+          aria-hidden="true"
+          :initial="{ scale: 0, rotate: -25 }"
+          :animate="{ scale: 1, rotate: 0 }"
+          :transition="{ type: 'spring', stiffness: 240, damping: 16, delay: 0.12 }"
+        >
           <svg viewBox="0 0 24 24" width="26" height="26">
             <path fill="currentColor" d="M12 3C6.5 3 2 6.94 2 11.8c0 2.3 1.02 4.4 2.7 5.96L4 21.5l3.96-1.2c1.2.5 2.6.78 4.04.78 5.5 0 10-3.94 10-8.78S17.5 3 12 3zm0 15.7c-1.3 0-2.55-.26-3.66-.74l-.4-.17-2.35.71.7-2.28-.2-.4A6.7 6.7 0 0 1 4.6 11.8C4.6 8.3 7.9 5.5 12 5.5s7.4 2.8 7.4 6.3-3.3 6.9-7.4 6.9z"/>
             <path fill="currentColor" d="M9.6 8.6c-.18-.4-.36-.41-.53-.42h-.45c-.16 0-.4.06-.62.29-.21.23-.8.78-.8 1.9s.82 2.2.94 2.36c.11.15 1.6 2.55 3.96 3.47 1.96.77 2.36.62 2.79.58.42-.04 1.37-.56 1.56-1.1.2-.54.2-1 .14-1.1-.06-.1-.2-.15-.43-.27-.23-.11-1.37-.68-1.58-.76-.21-.08-.37-.11-.53.12-.16.23-.6.76-.74.92-.13.15-.27.17-.5.06-.23-.12-.97-.36-1.85-1.14-.68-.61-1.14-1.36-1.28-1.59-.13-.23-.01-.35.1-.47.1-.1.23-.27.34-.4.11-.14.15-.23.23-.39.08-.15.04-.29-.02-.4-.06-.12-.5-1.27-.7-1.74z"/>
           </svg>
-        </span>
+        </motion.span>
         <span class="wordmark">OpenWA</span>
       </div>
-      <h2 class="screen-title">{{ title }}</h2>
-      <p class="screen-sub">{{ subtitle }}</p>
 
-      <!-- LOGIN -->
-      <form v-if="mode === 'login'" @submit.prevent="doLogin">
-        <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
-        <label>Password<input v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" /></label>
-        <button type="submit" :disabled="busy">{{ busy ? 'Memproses…' : 'Masuk' }}</button>
-        <p class="switch">
-          <a href="#" @click.prevent="reset(); mode = 'forgot'">Lupa password?</a> ·
-          Belum punya akun? <a href="#" @click.prevent="reset(); mode = 'register'">Daftar</a>
-        </p>
-      </form>
+      <!-- Mode switch (login/register/verify/forgot/reset) crossfades+slides via Motion -->
+      <AnimatePresence mode="wait" :initial="false">
+        <motion.div
+          :key="mode"
+          class="screen"
+          :initial="{ opacity: 0, x: 22 }"
+          :animate="{ opacity: 1, x: 0 }"
+          :exit="{ opacity: 0, x: -22 }"
+          :transition="{ duration: 0.24, ease: 'easeOut' }"
+        >
+          <h2 class="screen-title">{{ title }}</h2>
+          <p class="screen-sub">{{ subtitle }}</p>
 
-      <!-- REGISTER -->
-      <form v-else-if="mode === 'register'" @submit.prevent="doRegister">
-        <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
-        <label>Password<input v-model="password" type="password" autocomplete="new-password" placeholder="min. 8 karakter" /></label>
-        <button type="submit" :disabled="busy">{{ busy ? 'Mengirim OTP…' : 'Daftar' }}</button>
-        <p class="switch">Sudah punya akun? <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a></p>
-      </form>
+          <!-- LOGIN -->
+          <form v-if="mode === 'login'" @submit.prevent="doLogin">
+            <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
+            <label>Password<input v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" /></label>
+            <motion.button type="submit" :disabled="busy" :whileHover="{ scale: 1.02 }" :whilePress="{ scale: 0.97 }">{{ busy ? 'Memproses…' : 'Masuk' }}</motion.button>
+            <p class="switch">
+              <a href="#" @click.prevent="reset(); mode = 'forgot'">Lupa password?</a> ·
+              Belum punya akun? <a href="#" @click.prevent="reset(); mode = 'register'">Daftar</a>
+            </p>
+          </form>
 
-      <!-- VERIFY OTP -->
-      <form v-else-if="mode === 'verify'" @submit.prevent="doVerify">
-        <p class="hint">Kode OTP dikirim ke <strong>{{ email || 'email kamu' }}</strong>. Berlaku 10 menit.</p>
-        <label>Email<input v-model.trim="email" type="email" placeholder="email@domain.com" /></label>
-        <label>Kode OTP<input v-model.trim="code" inputmode="numeric" maxlength="6" placeholder="6 digit" /></label>
-        <button type="submit" :disabled="busy">{{ busy ? 'Memeriksa…' : 'Verifikasi' }}</button>
-        <p class="switch">
-          Tidak menerima kode? <a href="#" @click.prevent="doResend">Kirim ulang</a> ·
-          <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a>
-        </p>
-      </form>
+          <!-- REGISTER -->
+          <form v-else-if="mode === 'register'" @submit.prevent="doRegister">
+            <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
+            <label>Password<input v-model="password" type="password" autocomplete="new-password" placeholder="min. 8 karakter" /></label>
+            <motion.button type="submit" :disabled="busy" :whileHover="{ scale: 1.02 }" :whilePress="{ scale: 0.97 }">{{ busy ? 'Mengirim OTP…' : 'Daftar' }}</motion.button>
+            <p class="switch">Sudah punya akun? <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a></p>
+          </form>
 
-      <!-- FORGOT PASSWORD — minta kode reset -->
-      <form v-else-if="mode === 'forgot'" @submit.prevent="doForgot">
-        <p class="hint">Masukkan email akunmu. Kami kirim kode reset (berlaku 10 menit).</p>
-        <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
-        <button type="submit" :disabled="busy">{{ busy ? 'Mengirim kode…' : 'Kirim kode reset' }}</button>
-        <p class="switch">Ingat password? <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a></p>
-      </form>
+          <!-- VERIFY OTP -->
+          <form v-else-if="mode === 'verify'" @submit.prevent="doVerify">
+            <p class="hint">Kode OTP dikirim ke <strong>{{ email || 'email kamu' }}</strong>. Berlaku 10 menit.</p>
+            <label>Email<input v-model.trim="email" type="email" placeholder="email@domain.com" /></label>
+            <label>Kode OTP<input v-model.trim="code" inputmode="numeric" maxlength="6" placeholder="6 digit" /></label>
+            <motion.button type="submit" :disabled="busy" :whileHover="{ scale: 1.02 }" :whilePress="{ scale: 0.97 }">{{ busy ? 'Memeriksa…' : 'Verifikasi' }}</motion.button>
+            <p class="switch">
+              Tidak menerima kode? <a href="#" @click.prevent="doResend">Kirim ulang</a> ·
+              <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a>
+            </p>
+          </form>
 
-      <!-- RESET PASSWORD — kode + password baru -->
-      <form v-else-if="mode === 'reset'" @submit.prevent="doReset">
-        <p class="hint">Kode reset dikirim ke <strong>{{ email || 'email kamu' }}</strong>. Berlaku 10 menit.</p>
-        <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
-        <label>Kode reset<input v-model.trim="code" inputmode="numeric" maxlength="6" placeholder="6 digit" /></label>
-        <label>Password baru<input v-model="password" type="password" autocomplete="new-password" placeholder="min. 8 karakter" /></label>
-        <button type="submit" :disabled="busy">{{ busy ? 'Mereset…' : 'Reset password' }}</button>
-        <p class="switch">
-          Tidak menerima kode? <a href="#" @click.prevent="doForgot">Kirim ulang</a> ·
-          <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a>
-        </p>
-      </form>
+          <!-- FORGOT PASSWORD — minta kode reset -->
+          <form v-else-if="mode === 'forgot'" @submit.prevent="doForgot">
+            <p class="hint">Masukkan email akunmu. Kami kirim kode reset (berlaku 10 menit).</p>
+            <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
+            <motion.button type="submit" :disabled="busy" :whileHover="{ scale: 1.02 }" :whilePress="{ scale: 0.97 }">{{ busy ? 'Mengirim kode…' : 'Kirim kode reset' }}</motion.button>
+            <p class="switch">Ingat password? <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a></p>
+          </form>
 
-      <p v-if="error" class="error" role="status">{{ error }}</p>
-      <p v-if="info" class="ok" role="status">{{ info }}</p>
-    </section>
+          <!-- RESET PASSWORD — kode + password baru -->
+          <form v-else-if="mode === 'reset'" @submit.prevent="doReset">
+            <p class="hint">Kode reset dikirim ke <strong>{{ email || 'email kamu' }}</strong>. Berlaku 10 menit.</p>
+            <label>Email<input v-model.trim="email" type="email" autocomplete="email" placeholder="email@domain.com" /></label>
+            <label>Kode reset<input v-model.trim="code" inputmode="numeric" maxlength="6" placeholder="6 digit" /></label>
+            <label>Password baru<input v-model="password" type="password" autocomplete="new-password" placeholder="min. 8 karakter" /></label>
+            <motion.button type="submit" :disabled="busy" :whileHover="{ scale: 1.02 }" :whilePress="{ scale: 0.97 }">{{ busy ? 'Mereset…' : 'Reset password' }}</motion.button>
+            <p class="switch">
+              Tidak menerima kode? <a href="#" @click.prevent="doForgot">Kirim ulang</a> ·
+              <a href="#" @click.prevent="reset(); mode = 'login'">Masuk</a>
+            </p>
+          </form>
+        </motion.div>
+      </AnimatePresence>
+
+      <AnimatePresence>
+        <motion.p v-if="error" key="err" class="error" role="status" :initial="{ opacity: 0, y: -6 }" :animate="{ opacity: 1, y: 0 }" :exit="{ opacity: 0 }">{{ error }}</motion.p>
+      </AnimatePresence>
+      <AnimatePresence>
+        <motion.p v-if="info" key="info" class="ok" role="status" :initial="{ opacity: 0, y: -6 }" :animate="{ opacity: 1, y: 0 }" :exit="{ opacity: 0 }">{{ info }}</motion.p>
+      </AnimatePresence>
+    </motion.section>
   </main>
 </template>
 
@@ -215,6 +244,13 @@ async function doLogin() {
   border-radius: 18px;
   /* override the soft global card shadow with a subtle green glow */
   box-shadow: 0 14px 44px -16px rgba(31, 169, 113, 0.32), 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* motion.div wrapper per-mode — re-creates the card's column spacing for its content */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 /* ── brand header ───────────────────────────── */
