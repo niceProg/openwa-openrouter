@@ -58,6 +58,10 @@ export function useAuth() {
       authRequest<{ ok: boolean; message: string }>('/verify-otp', { email, code }),
     resendOtp: (email: string) =>
       authRequest<{ ok: boolean; message: string }>('/resend-otp', { email }),
+    forgotPassword: (email: string) =>
+      authRequest<{ ok: boolean; message: string }>('/forgot-password', { email }),
+    resetPassword: (email: string, code: string, password: string) =>
+      authRequest<{ ok: boolean; message: string }>('/reset-password', { email, code, password }),
     async login(email: string, password: string) {
       const r = await authRequest<{ token: string; user: AuthUser }>('/login', { email, password })
       setToken(r.token)

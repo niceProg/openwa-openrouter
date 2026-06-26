@@ -64,19 +64,19 @@ function publicUser(u) {
   }
 }
 
-async function issueOtp(email) {
-  // Batalkan OTP lama yang belum dipakai → hanya satu kode aktif (perkecil brute-force).
-  await query("UPDATE email_otps SET consumed=TRUE WHERE email=$1 AND purpose='verify' AND consumed=FALSE", [email])
+async function issueOtp(email, purpose = 'verify') {
+  // Batalkan OTP lama yang belum dipakai (purpose sama) → hanya satu kode aktif (perkecil brute-force).
+  await query('UPDATE email_otps SET consumed=TRUE WHERE email=$1 AND purpose=$2 AND consumed=FALSE', [email, purpose])
   const code = genCode()
   const expires = new Date(Date.now() + OTP_TTL_MIN * 60000)
   await query('INSERT INTO email_otps(email, code_hash, purpose, expires_at) VALUES ($1,$2,$3,$4)', [
     email,
     hashCode(code),
-    'verify',
+    purpose,
     expires,
   ])
-  if (OTP_DEBUG) console.log(`[otp] ${email} = ${code}`)
-  await sendOtp(email, code)
+  if (OTP_DEBUG) console.log(`[otp:${purpose}] ${email} = ${code}`)
+  await sendOtp(email, code, purpose)
 }
 
 // --- middleware: butuh JWT user yang valid ---
@@ -154,6 +154,44 @@ router.post('/verify-otp', async (req, res) => {
   await query('UPDATE email_otps SET consumed=TRUE WHERE id=$1', [row.id])
   await query('UPDATE users SET email_verified=TRUE WHERE email=$1', [email])
   res.json({ ok: true, message: 'Email terverifikasi. Silakan login.' })
+})
+
+// Lupa password — langkah 1: minta kode reset ke email. Selalu balas sukses
+// (anti-enumerasi: jangan bocorkan apakah email terdaftar); OTP hanya dikirim bila ada.
+router.post('/forgot-password', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase()
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ message: 'Email tidak valid' })
+  const r = await query('SELECT id FROM users WHERE email=$1', [email])
+  if (r.rows.length) await issueOtp(email, 'reset')
+  res.json({ ok: true, message: 'Jika email terdaftar, kode reset sudah dikirim.' })
+})
+
+// Lupa password — langkah 2: verifikasi kode 'reset' + set password baru.
+router.post('/reset-password', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase()
+  const code = String(req.body?.code || '').trim()
+  const password = String(req.body?.password || '')
+  if (password.length < 8) return res.status(400).json({ message: 'Password minimal 8 karakter' })
+  const r = await query(
+    `SELECT id, code_hash, attempts FROM email_otps
+     WHERE email=$1 AND purpose='reset' AND consumed=FALSE AND expires_at > now()
+     ORDER BY id DESC LIMIT 1`,
+    [email],
+  )
+  const row = r.rows[0]
+  if (!row) return res.status(400).json({ message: 'Kode salah atau kedaluwarsa' })
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    await query('UPDATE email_otps SET consumed=TRUE WHERE id=$1', [row.id])
+    return res.status(429).json({ message: 'Terlalu banyak percobaan. Minta kode baru.' })
+  }
+  if (row.code_hash !== hashCode(code)) {
+    await query('UPDATE email_otps SET attempts=attempts+1 WHERE id=$1', [row.id])
+    return res.status(400).json({ message: 'Kode salah atau kedaluwarsa' })
+  }
+  await query('UPDATE email_otps SET consumed=TRUE WHERE id=$1', [row.id])
+  // Reset password + tandai email terverifikasi (bukti kepemilikan lewat OTP email).
+  await query('UPDATE users SET password_hash=$1, email_verified=TRUE WHERE email=$2', [hashPassword(password), email])
+  res.json({ ok: true, message: 'Password berhasil direset. Silakan login.' })
 })
 
 router.post('/login', async (req, res) => {
