@@ -562,6 +562,31 @@ app.post('/api/sessions/:id/messages/send-text', waUserOrKey, async (req, res) =
   }
 })
 
+// Daftar grup WhatsApp yang diikuti session — untuk memilih grup sebagai target
+// notifikasi (chatId grup berakhiran @g.us). Dipakai dropdown "Tujuan: Grup" di dashboard.
+app.get('/api/sessions/:id/groups', waUserOrKey, async (req, res) => {
+  const s = ownedSession(req, res)
+  if (!s) return
+  if (s.status !== 'CONNECTED') {
+    return res.status(409).json({ message: `Session not connected (status: ${s.status})` })
+  }
+  try {
+    const chats = await s.client.getChats()
+    const groups = chats
+      .filter((c) => c.isGroup)
+      .map((c) => ({
+        id: c.id?._serialized || '',
+        name: c.name || c.formattedTitle || c.id?.user || '(tanpa nama)',
+        participants: Array.isArray(c.participants) ? c.participants.length : null,
+      }))
+      .filter((g) => g.id)
+      .sort((a, b) => a.name.localeCompare(b.name))
+    res.json(groups)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
 // Pulihkan session WhatsApp yang tercatat di DB (auth via LocalAuth di volume).
 async function restoreSessions() {
   const r = await dbQuery(

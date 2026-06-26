@@ -123,12 +123,20 @@ async function request<T = unknown>(path: string, init: RequestInit = {}): Promi
   return unwrap<T>(json)
 }
 
+/** A WhatsApp group the connected session belongs to (notification target candidate). */
+export interface Group {
+  id: string // chatId, ends with @g.us
+  name: string
+  participants: number | null
+}
+
 export function useOpenWa() {
   const { token } = useAuth()
   return {
     request,
 
     listSessions: () => request<Session[]>('/sessions'),
+    listGroups: (id: string) => request<Group[]>(`/sessions/${encodeURIComponent(id)}/groups`),
     listMessages: (id: string) =>
       request<InboxMessage[]>(`/sessions/${encodeURIComponent(id)}/messages`),
     eventsUrl: (id: string) => buildEventsUrl(id, token.value),
